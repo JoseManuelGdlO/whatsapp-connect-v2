@@ -11,7 +11,8 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
     ports:
-      - "3001:3001"
+      # If 3001 is taken on the host, set API_PUBLIC_PORT in EasyPanel (e.g. 13001)
+      - "${API_PUBLIC_PORT:-3001}:3001"
 
   worker:
     build:
@@ -37,5 +38,6 @@ services:
     environment:
       WEB_PORT: 3000
     ports:
-      - "3000:3000"
+      # If 3000 is taken on the host, set WEB_PUBLIC_PORT in EasyPanel (e.g. 13000)
+      - "${WEB_PUBLIC_PORT:-3000}:3000"
 
