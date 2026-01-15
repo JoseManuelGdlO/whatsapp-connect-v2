@@ -1,0 +1,133 @@
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: light;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+
+a { color: inherit; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.container {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.brand { font-weight: 700; }
+.nav { display: flex; gap: 12px; align-items: center; }
+
+.linkBtn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: inherit;
+}
+
+.main { margin-top: 16px; }
+
+.card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.muted { color: #475569; }
+
+.form {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+}
+
+label { display: grid; gap: 6px; font-size: 14px; }
+
+input {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+select {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  background: white;
+}
+
+button {
+  border: 1px solid #cbd5e1;
+  background: #0f172a;
+  color: white;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 900px) {
+  .grid { grid-template-columns: 1fr 1fr; }
+}
+
+.list { display: grid; gap: 8px; margin-top: 12px; }
+
+.row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  background: white;
+  color: #0f172a;
+}
+
+.row.active { outline: 2px solid #0f172a; }
+
+.rowTitle { font-weight: 600; }
+.rowMeta { font-size: 12px; color: #475569; }
+.rowRight { font-size: 12px; color: #475569; }
+
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+
+.code {
+  background: #0b1220;
+  color: #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  overflow: auto;
+}
+

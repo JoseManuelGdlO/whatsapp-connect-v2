@@ -1,0 +1,162 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPERADMIN
+  TENANT_ADMIN
+  AGENT
+}
+
+enum DeviceStatus {
+  OFFLINE
+  QR
+  ONLINE
+  ERROR
+}
+
+enum DeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  DLQ
+}
+
+enum OutboundStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users    User[]
+  devices  Device[]
+  webhooks WebhookEndpoint[]
+  events   Event[]
+  outboundMessages OutboundMessage[]
+}
+
+model User {
+  id           String    @id @default(cuid())
+  tenantId     String?
+  email        String    @unique
+  passwordHash String
+  role         UserRole
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+}
+
+model Device {
+  id        String       @id @default(cuid())
+  tenantId  String
+  label     String
+  phoneHint String?      // optional hint only (not trusted)
+  status    DeviceStatus @default(OFFLINE)
+  qr        String?
+  lastSeenAt DateTime?
+  lastError String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  session   WaSession?
+  events    Event[]
+  outbound  OutboundMessage[]
+
+  @@index([tenantId])
+}
+
+model WaSession {
+  deviceId     String   @id
+  authStateEnc String
+  updatedAt    DateTime @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+}
+
+model WebhookEndpoint {
+  id          String   @id @default(cuid())
+  tenantId    String
+  url         String
+  secret      String
+  enabled     Boolean  @default(true)
+  eventFilters Json?
+  rateLimit   Int?     // requests/min (optional MVP)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deliveries  WebhookDelivery[]
+
+  @@index([tenantId])
+}
+
+model Event {
+  id             String   @id @default(cuid())
+  tenantId       String
+  deviceId       String
+  type           String
+  normalizedJson Json
+  rawJson        Json
+  createdAt      DateTime @default(now())
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId, createdAt])
+  @@index([deviceId, createdAt])
+}
+
+model WebhookDelivery {
+  id          String         @id @default(cuid())
+  endpointId  String
+  eventId     String
+  status      DeliveryStatus @default(PENDING)
+  attempts    Int            @default(0)
+  lastError   String?
+  nextRetryAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event    Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, createdAt])
+  @@index([eventId])
+}
+
+model OutboundMessage {
+  id                String         @id @default(cuid())
+  tenantId          String
+  deviceId          String
+  to                String
+  type              String         @default("text")
+  payloadJson       Json
+  status            OutboundStatus @default(QUEUED)
+  providerMessageId String?
+  error             String?
+  isTest            Boolean        @default(false)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([deviceId, createdAt])
+}
+
