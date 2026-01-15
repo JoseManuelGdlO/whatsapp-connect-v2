@@ -632,9 +632,10 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 const port = Number(process.env.API_PORT ?? 3001);
 (async () => {
   await ensureSuperadmin();
-  app.listen(port, () => {
+  // Bind to all interfaces so reverse proxies (EasyPanel) can reach the container.
+  app.listen(port, '0.0.0.0', () => {
     // eslint-disable-next-line no-console
-    console.log(`[api] listening on http://localhost:${port}`);
+    console.log(`[api] listening on http://0.0.0.0:${port}`);
   });
 })().catch((err) => {
   // eslint-disable-next-line no-console
