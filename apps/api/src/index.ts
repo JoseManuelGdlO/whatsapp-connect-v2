@@ -29,6 +29,33 @@ function hmacSha256(secret: string, payload: string) {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
 
+function safeEqual(a: string, b: string) {
+  const aa = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (aa.length !== bb.length) return false;
+  return crypto.timingSafeEqual(aa, bb);
+}
+
+type BotAuth = { tenantId: string };
+function botApiKeyRequired(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const apiKey = req.header('x-api-key') ?? '';
+  const expected = process.env.BOT_API_KEY ?? '';
+  if (!expected) return res.status(500).json({ error: 'bot_api_key_not_configured' });
+  if (!apiKey || !safeEqual(apiKey, expected)) {
+    return res.status(401).json({ error: 'unauthorized', message: 'invalid_api_key' });
+  }
+  const tenantId = req.header('x-tenant-id');
+  if (!tenantId) return res.status(400).json({ error: 'tenantId_required' });
+  (req as any).bot = { tenantId } satisfies BotAuth;
+  next();
+}
+
+function authOrBotApiKeyRequired(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const apiKey = req.header('x-api-key');
+  if (apiKey) return botApiKeyRequired(req, res, next);
+  return authRequired(req, res, next);
+}
+
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
@@ -387,10 +414,11 @@ function toJid(to: string): string {
 
 app.post(
   '/devices/:id/messages/send',
-  authRequired,
+  authOrBotApiKeyRequired,
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
-  const scope = getTenantScope(auth);
+  const bot = (req as any).bot as BotAuth | undefined;
+  const auth = (req as any).auth as JwtPayload | undefined;
+  const scope = bot ? { tenantId: bot.tenantId, isSuperadmin: false } : getTenantScope(auth as JwtPayload);
 
   const Body = z.object({
     to: z.string().min(3),
@@ -428,10 +456,11 @@ app.post(
 
 app.post(
   '/devices/:id/messages/test',
-  authRequired,
+  authOrBotApiKeyRequired,
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
-  const scope = getTenantScope(auth);
+  const bot = (req as any).bot as BotAuth | undefined;
+  const auth = (req as any).auth as JwtPayload | undefined;
+  const scope = bot ? { tenantId: bot.tenantId, isSuperadmin: false } : getTenantScope(auth as JwtPayload);
 
   const Body = z.object({
     to: z.string().min(3),

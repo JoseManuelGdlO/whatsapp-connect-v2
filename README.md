@@ -45,4 +45,8 @@ npm run dev
 - Worker: `apps/worker/README.md`
 - Web: `apps/web/README.md`
 
+## Integración con bot externo (responder por WhatsApp)
+- **Webhook entrante**: ver formato/headers/payload en `apps/worker/README.md` (incluye `deviceId`, `tenantId` y `normalized.from`).
+- **Responder**: el bot debe llamar `POST /devices/:deviceId/messages/send` con `x-api-key` + `x-tenant-id` (ver `apps/api/README.md`).
+
 
