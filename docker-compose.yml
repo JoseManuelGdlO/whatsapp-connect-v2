@@ -10,8 +10,8 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-    expose:
-      - "3001"
+    ports:
+      - "3001:3001"
 
   worker:
     build:
@@ -22,6 +22,9 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       WA_AUTH_ENC_KEY_B64: ${WA_AUTH_ENC_KEY_B64}
+    # Optional: keep internal only. If you want to reach /health from outside, uncomment:
+    # ports:
+    #   - "3030:3030"
     expose:
       - "3030"
 
@@ -33,6 +36,6 @@ services:
         VITE_API_URL: ${VITE_API_URL}
     environment:
       WEB_PORT: 3000
-    expose:
-      - "3000"
+    ports:
+      - "3000:3000"
 
