@@ -10,7 +10,10 @@ export default defineConfig({
   },
   preview: {
     host: true,
-    port: previewPort
+    port: previewPort,
+    // EasyPanel uses its own hostnames; allow them in preview mode.
+    // You can restrict this to a list if you prefer.
+    allowedHosts: true
   }
 });
 
