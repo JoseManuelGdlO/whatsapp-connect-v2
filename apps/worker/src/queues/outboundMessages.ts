@@ -59,20 +59,57 @@ export function startOutboundMessagesWorker() {
       }
 
       const to = row.to; // expects jid or phone@s.whatsapp.net depending on caller
+      const queuedAt = row.createdAt.getTime();
+      const processingDelay = Date.now() - queuedAt;
+
+      // Log if message was queued for too long (potential cause of WhatsApp "waiting" message)
+      if (processingDelay > 30000) {
+        await logger.warn('Outbound message delayed in queue', undefined, {
+          tenantId: row.tenantId,
+          deviceId: row.deviceId,
+          metadata: { 
+            outboundMessageId: row.id, 
+            to,
+            queuedAt: new Date(queuedAt).toISOString(),
+            processingDelayMs: processingDelay
+          }
+        }).catch(() => {});
+      }
 
       try {
+        const sendStartTime = Date.now();
         const sent = await sock.sendMessage(to, { text });
+        const sendDuration = Date.now() - sendStartTime;
         const providerMessageId = sent?.key?.id ?? null;
 
         await prisma.outboundMessage.update({
           where: { id: row.id },
           data: { status: 'SENT', providerMessageId, error: null }
         });
+
+        // Log slow sends
+        if (sendDuration > 5000) {
+          await logger.warn('Slow outbound message send', undefined, {
+            tenantId: row.tenantId,
+            deviceId: row.deviceId,
+            metadata: { 
+              outboundMessageId: row.id, 
+              to,
+              sendDurationMs: sendDuration,
+              totalDelayMs: processingDelay + sendDuration
+            }
+          }).catch(() => {});
+        }
       } catch (err: any) {
         await logger.error('Failed to send outbound message', err, {
           tenantId: row.tenantId,
           deviceId: row.deviceId,
-          metadata: { outboundMessageId: row.id, to }
+          metadata: { 
+            outboundMessageId: row.id, 
+            to,
+            processingDelayMs: processingDelay,
+            error: err?.message
+          }
         }).catch(() => {});
         throw err;
       }
