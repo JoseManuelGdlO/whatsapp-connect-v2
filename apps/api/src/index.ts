@@ -466,7 +466,9 @@ app.post(
     });
 
     // Return the public URL (frontend URL)
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    let frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    // Remove trailing slash if present
+    frontendUrl = frontendUrl.replace(/\/$/, '');
     const publicUrl = `${frontendUrl}/public/qr/${token}`;
 
     res.json({ url: publicUrl, token: link.token, expiresAt: link.expiresAt });

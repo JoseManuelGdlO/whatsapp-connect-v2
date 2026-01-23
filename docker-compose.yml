@@ -11,6 +11,7 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       BOT_API_KEY: ${BOT_API_KEY}
+      FRONTEND_URL: ${FRONTEND_URL}
     ports:
       # If 3001 is taken on the host, set API_PUBLIC_PORT in EasyPanel (e.g. 13001)
       - "${API_PUBLIC_PORT:-3001}:3001"
