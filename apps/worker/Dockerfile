@@ -13,10 +13,12 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/worker/package.json apps/worker/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/db/package.json packages/db/package.json
+COPY packages/logger/package.json packages/logger/package.json
 RUN npm ci
 
 # Copy source and build
 COPY packages/db/prisma packages/db/prisma
+COPY packages/logger packages/logger
 COPY apps/worker apps/worker
 RUN npx prisma generate --schema packages/db/prisma/schema.prisma
 RUN npm run build -w apps/worker
@@ -27,4 +29,3 @@ ENV WORKER_HEALTH_PORT=3030
 EXPOSE 3030
 
 CMD ["npm","run","start","-w","apps/worker"]
-
