@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
+    "@wc/logger": "file:../../packages/logger",
     "@whiskeysockets/baileys": "^6.7.11",
     "bullmq": "^5.34.10",
     "dotenv": "^16.4.7",

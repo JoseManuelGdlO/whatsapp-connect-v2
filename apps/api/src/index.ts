@@ -13,9 +13,11 @@ import { PrismaClient, UserRole } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import crypto from 'crypto';
+import { createLogger } from '@wc/logger';
 
 const app = express();
 const prisma = new PrismaClient();
+const logger = createLogger(prisma, 'api');
 
 // Disable conditional GET/ETag caching; the web UI polls and expects 200 JSON (not 304).
 app.set('etag', false);
@@ -101,6 +103,9 @@ function authRequired(req: express.Request, res: express.Response, next: express
     (req as any).auth = getAuth(req);
     next();
   } catch (err: any) {
+    logger.warn('Authentication failed', err, {
+      metadata: { path: req.path, method: req.method }
+    }).catch(() => {}); // Don't block response if logging fails
     res.status(401).json({ error: 'unauthorized', message: err?.message ?? 'unauthorized' });
   }
 }
@@ -652,9 +657,16 @@ app.post(
   })
 );
 
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  // eslint-disable-next-line no-console
-  console.error('[api] unhandled', err);
+app.use(async (err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const tenantId = (req as any).auth?.tenantId || (req as any).bot?.tenantId;
+  await logger.error('Unhandled error in API', err, {
+    tenantId: tenantId || undefined,
+    metadata: {
+      path: req.path,
+      method: req.method,
+      statusCode: res.statusCode
+    }
+  });
   res.status(500).json({ error: 'internal_error', message: err?.message ?? 'internal_error' });
 });
 
@@ -662,13 +674,11 @@ const port = Number(process.env.API_PORT ?? 3001);
 (async () => {
   await ensureSuperadmin();
   // Bind to all interfaces so reverse proxies (EasyPanel) can reach the container.
-  app.listen(port, '0.0.0.0', () => {
-    // eslint-disable-next-line no-console
-    console.log(`[api] listening on http://0.0.0.0:${port}`);
+  app.listen(port, '0.0.0.0', async () => {
+    await logger.info(`API listening on http://0.0.0.0:${port}`);
   });
-})().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error('[api] failed to start', err);
+})().catch(async (err) => {
+  await logger.error('API failed to start', err);
   process.exit(1);
 });
 

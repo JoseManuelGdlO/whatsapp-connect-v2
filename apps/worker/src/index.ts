@@ -7,12 +7,14 @@ import { startDeviceCommandsWorker } from './queues/deviceCommands.js';
 import { startWebhookDispatchWorker } from './queues/webhookDispatch.js';
 import { startOutboundMessagesWorker } from './queues/outboundMessages.js';
 import { assertCryptoKeyConfigured } from './lib/crypto.js';
+import { prisma } from './lib/prisma.js';
+import { createLogger } from '@wc/logger';
 
 const port = Number(process.env.WORKER_HEALTH_PORT ?? 3030);
+const logger = createLogger(prisma, 'worker');
 
 // Simple stdout heartbeat for now; worker will run BullMQ processors.
-// eslint-disable-next-line no-console
-console.log(`[worker] starting (healthPort=${port})`);
+logger.info(`Worker starting (healthPort=${port})`).catch(() => {});
 
 assertCryptoKeyConfigured();
 
@@ -32,13 +34,11 @@ http
     res.statusCode = 404;
     res.end('not_found');
   })
-  .listen(port, '0.0.0.0', () => {
-    // eslint-disable-next-line no-console
-    console.log(`[worker] health listening on http://0.0.0.0:${port}/health`);
+  .listen(port, '0.0.0.0', async () => {
+    await logger.info(`Worker health listening on http://0.0.0.0:${port}/health`).catch(() => {});
   });
 
 setInterval(() => {
-  // eslint-disable-next-line no-console
-  console.log(`[worker] alive ${new Date().toISOString()}`);
+  logger.info(`Worker alive ${new Date().toISOString()}`).catch(() => {});
 }, 30_000);
 

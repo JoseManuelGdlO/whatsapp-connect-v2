@@ -21,9 +21,7 @@ En cada POST al webhook el worker envía:
 - `x-device-id`: device que recibió el mensaje
 - `x-event-type`: tipo (ej: `message.inbound`)
 - `x-timestamp`: epoch ms (string)
-- `x-signature`: HMAC-SHA256 del string `${x-timestamp}.${rawBody}` usando `webhookEndpoint.secret`
-
-### Payload (JSON)
+- `x-signature`: HMAC-SHA256 del string `${x-timestamp}.${rawBody}` usando `webhookEndpoint.secret`### Payload (JSON)
 El body del webhook tiene esta forma:
 
 ```json
@@ -50,4 +48,3 @@ Para que tu bot responda “al mismo chat”:
 - `deviceId`: desde qué WhatsApp responder (se usa en `/devices/:id/messages/send`)
 - `normalized.from`: chat destino (JID; usar tal cual como `to`)
 - `tenantId` o header `x-tenant-id`: úsalo como `x-tenant-id` al llamar el API (modo bot con `x-api-key`)
-

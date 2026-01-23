@@ -38,9 +38,7 @@ curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
   -d '{"to":"'"$FROM_JID"'","text":"Hola, soy el bot"}'
 ```
 
-## Troubleshooting
-
-- **401 `invalid_api_key`**: el header `x-api-key` no coincide con `BOT_API_KEY` del API.
+## Troubleshooting- **401 `invalid_api_key`**: el header `x-api-key` no coincide con `BOT_API_KEY` del API.
 - **400 `tenantId_required`**: falta header `x-tenant-id` (usa el `tenantId` del webhook o el header `x-tenant-id` del webhook).
 - **403 `forbidden`**: el `deviceId` no pertenece al tenant indicado en `x-tenant-id` (o al tenant del JWT).
 - **409 `device_not_online`**: el device no está ONLINE (necesita conectar sesión/QR).
@@ -48,4 +46,3 @@ curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
 
 Para inspeccionar envíos:
 - `GET /devices/:id/messages/outbound` (últimos 50, incluye `status` y `error`).
-

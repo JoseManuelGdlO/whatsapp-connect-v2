@@ -4,6 +4,9 @@ import type { WASocket } from '@whiskeysockets/baileys';
 import { prisma } from '../lib/prisma.js';
 import { loadAuthState } from './authStateDb.js';
 import { handleMessagesUpsert } from './inbound.js';
+import { createLogger } from '@wc/logger';
+
+const logger = createLogger(prisma, 'worker');
 
 type SessionEntry = {
   socket: WASocket;
@@ -54,6 +57,7 @@ export class SessionManager {
           where: { id: deviceId },
           data: { lastError: `saveState: ${e?.message ?? 'unknown'}` }
         });
+        await logger.error('Failed to save auth state', e, { deviceId }).catch(() => {});
       }
     });
 
@@ -78,15 +82,23 @@ export class SessionManager {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const reason = statusCode ? DisconnectReason[statusCode] : undefined;
         const errMsg = (lastDisconnect?.error as any)?.message as string | undefined;
+        const errorMessage = reason ?? errMsg ?? 'connection_closed';
 
         await prisma.device.update({
           where: { id: deviceId },
           data: {
             status: 'OFFLINE',
             qr: null,
-            lastError: reason ?? errMsg ?? 'connection_closed'
+            lastError: errorMessage
           }
         });
+
+        const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
+        await logger.warn(`Device connection closed: ${errorMessage}`, undefined, {
+          deviceId,
+          tenantId: device?.tenantId,
+          metadata: { statusCode, reason, willReconnect: statusCode !== DisconnectReason.loggedOut }
+        }).catch(() => {});
 
         const current = this.sessions.get(deviceId);
         if (!current || current.closing) return;
@@ -109,6 +121,12 @@ export class SessionManager {
           where: { id: deviceId },
           data: { lastError: `messages.upsert: ${e?.message ?? 'unknown'}` }
         });
+        const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
+        await logger.error('Failed to handle messages.upsert', e, {
+          deviceId,
+          tenantId: device?.tenantId,
+          metadata: { messageCount: m.messages?.length ?? 0 }
+        }).catch(() => {});
       }
     });
   }

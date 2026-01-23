@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
+    "@wc/logger": "file:../../packages/logger",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.34.10",
     "cors": "^2.8.5",

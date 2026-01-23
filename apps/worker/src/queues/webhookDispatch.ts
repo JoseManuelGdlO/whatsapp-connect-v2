@@ -3,6 +3,9 @@ import { Worker } from 'bullmq';
 
 import { prisma } from '../lib/prisma.js';
 import { redis } from '../lib/redis.js';
+import { createLogger } from '@wc/logger';
+
+const logger = createLogger(prisma, 'worker');
 
 type WebhookJob = {
   deliveryId: string;
@@ -20,8 +23,14 @@ export function startWebhookDispatchWorker() {
         where: { id: job.data.deliveryId },
         include: { endpoint: true, event: true }
       });
-      if (!delivery) return;
-      if (!delivery.endpoint.enabled) return;
+      if (!delivery) {
+        await logger.warn(`Webhook delivery ${job.data.deliveryId} not found`).catch(() => {});
+        return;
+      }
+      if (!delivery.endpoint.enabled) {
+        await logger.debug(`Webhook endpoint ${delivery.endpoint.id} is disabled, skipping`).catch(() => {});
+        return;
+      }
 
       const payload = {
         eventId: delivery.eventId,
@@ -37,28 +46,59 @@ export function startWebhookDispatchWorker() {
       const timestamp = Date.now().toString();
       const signature = hmacSha256(delivery.endpoint.secret, `${timestamp}.${body}`);
 
-      const resp = await fetch(delivery.endpoint.url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-event-id': delivery.eventId,
-          'x-tenant-id': delivery.event.tenantId,
-          'x-device-id': delivery.event.deviceId,
-          'x-event-type': delivery.event.type,
-          'x-timestamp': timestamp,
-          'x-signature': signature
-        },
-        body
-      });
+      try {
+        const resp = await fetch(delivery.endpoint.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-event-id': delivery.eventId,
+            'x-tenant-id': delivery.event.tenantId,
+            'x-device-id': delivery.event.deviceId,
+            'x-event-type': delivery.event.type,
+            'x-timestamp': timestamp,
+            'x-signature': signature
+          },
+          body
+        });
 
-      if (!resp.ok) {
-        throw new Error(`Webhook responded ${resp.status}`);
+        if (!resp.ok) {
+          const errorText = await resp.text().catch(() => '');
+          const error = new Error(`Webhook responded ${resp.status}: ${errorText.substring(0, 200)}`);
+          await logger.error(
+            `Webhook delivery failed for ${delivery.endpoint.url}`,
+            error,
+            {
+              tenantId: delivery.event.tenantId,
+              deviceId: delivery.event.deviceId,
+              metadata: {
+                endpointId: delivery.endpoint.id,
+                eventId: delivery.eventId,
+                statusCode: resp.status
+              }
+            }
+          ).catch(() => {});
+          throw error;
+        }
+
+        await prisma.webhookDelivery.update({
+          where: { id: delivery.id },
+          data: { status: 'SUCCESS', attempts: { increment: 1 }, lastError: null, nextRetryAt: null }
+        });
+      } catch (err: any) {
+        await logger.error(
+          `Webhook delivery error for ${delivery.endpoint.url}`,
+          err,
+          {
+            tenantId: delivery.event.tenantId,
+            deviceId: delivery.event.deviceId,
+            metadata: {
+              endpointId: delivery.endpoint.id,
+              eventId: delivery.eventId
+            }
+          }
+        ).catch(() => {});
+        throw err;
       }
-
-      await prisma.webhookDelivery.update({
-        where: { id: delivery.id },
-        data: { status: 'SUCCESS', attempts: { increment: 1 }, lastError: null, nextRetryAt: null }
-      });
     },
     {
       connection: redis,
@@ -81,13 +121,23 @@ export function startWebhookDispatchWorker() {
           nextRetryAt
         }
       });
-    } catch {
-      // ignore
+      await logger.error(
+        `Webhook job failed (deliveryId: ${(job.data as any).deliveryId}, attempts: ${attempts})`,
+        err,
+        {
+          metadata: {
+            deliveryId: (job.data as any).deliveryId,
+            attempts,
+            maxAttempts: max
+          }
+        }
+      ).catch(() => {});
+    } catch (updateErr) {
+      await logger.error('Failed to update webhook delivery status', updateErr).catch(() => {});
     }
   });
 
-  // eslint-disable-next-line no-console
-  console.log('[worker] webhook_dispatch worker started');
+  logger.info('[worker] webhook_dispatch worker started').catch(() => {});
   return worker;
 }
 
