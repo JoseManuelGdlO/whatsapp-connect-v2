@@ -21,6 +21,7 @@ COPY packages/db/prisma packages/db/prisma
 COPY packages/logger packages/logger
 COPY apps/api apps/api
 RUN npx prisma generate --schema packages/db/prisma/schema.prisma
+RUN npm run build -w packages/logger
 RUN npm run build -w apps/api
 
 ENV NODE_ENV=production
