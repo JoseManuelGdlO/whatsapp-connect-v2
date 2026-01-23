@@ -21,6 +21,20 @@ export class DatabaseLogger {
     error?: Error | string,
     context?: LogContext
   ): Promise<void> {
+    // Always log to console for immediate visibility
+    const consoleMethod = level === 'ERROR' ? console.error : level === 'WARN' ? console.warn : console.log;
+    const prefix = `[${this.service}] [${level}]`;
+    if (error) {
+      consoleMethod(`${prefix} ${message}`, error);
+    } else {
+      consoleMethod(`${prefix} ${message}`);
+    }
+
+    // Only save ERROR level to database to avoid saturating it
+    if (level !== 'ERROR') {
+      return;
+    }
+
     try {
       const mergedContext = { ...this.defaultContext, ...context };
       const errorMessage = error instanceof Error ? error.message : error;
@@ -37,15 +51,6 @@ export class DatabaseLogger {
           deviceId: mergedContext.deviceId || undefined
         }
       });
-
-      // Also log to console for immediate visibility
-      const consoleMethod = level === 'ERROR' ? console.error : level === 'WARN' ? console.warn : console.log;
-      const prefix = `[${this.service}] [${level}]`;
-      if (error) {
-        consoleMethod(`${prefix} ${message}`, error);
-      } else {
-        consoleMethod(`${prefix} ${message}`);
-      }
     } catch (logError) {
       // Fallback to console if DB logging fails
       console.error(`[${this.service}] Failed to write log to database:`, logError);
