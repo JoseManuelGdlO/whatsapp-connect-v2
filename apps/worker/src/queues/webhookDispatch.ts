@@ -133,11 +133,11 @@ export function startWebhookDispatchWorker() {
         }
       ).catch(() => {});
     } catch (updateErr) {
-      await logger.error('Failed to update webhook delivery status', updateErr).catch(() => {});
+      const error = updateErr instanceof Error ? updateErr : new Error(String(updateErr));
+      await logger.error('Failed to update webhook delivery status', error).catch(() => {});
     }
   });
 
   logger.info('[worker] webhook_dispatch worker started').catch(() => {});
   return worker;
 }
-

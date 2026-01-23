@@ -92,11 +92,11 @@ export function startOutboundMessagesWorker() {
         err
       ).catch(() => {});
     } catch (updateErr) {
-      await logger.error('Failed to update outbound message status', updateErr).catch(() => {});
+      const error = updateErr instanceof Error ? updateErr : new Error(String(updateErr));
+      await logger.error('Failed to update outbound message status', error).catch(() => {});
     }
   });
 
   logger.info('[worker] outbound_messages worker started').catch(() => {});
   return worker;
 }
-
