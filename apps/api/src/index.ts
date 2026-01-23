@@ -129,6 +129,61 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'api' });
 });
 
+// Public endpoint (no authentication required)
+app.get(
+  '/public/qr/:token',
+  asyncHandler(async (req, res) => {
+    const { token } = req.params;
+    
+    const link = await prisma.publicQrLink.findUnique({
+      where: { token },
+      include: { device: true }
+    });
+
+    if (!link) {
+      return res.status(404).json({ status: 'NOT_FOUND' });
+    }
+
+    // Check if expired
+    if (new Date() > link.expiresAt) {
+      return res.json({ status: 'EXPIRED', deviceLabel: link.device.label });
+    }
+
+    // Check device status
+    const device = await prisma.device.findUnique({ where: { id: link.deviceId } });
+    if (!device) {
+      return res.status(404).json({ status: 'NOT_FOUND' });
+    }
+
+    if (device.status === 'ONLINE') {
+      // Mark link as expired since device is connected
+      await prisma.publicQrLink.update({
+        where: { id: link.id },
+        data: { expiresAt: new Date() }
+      });
+      return res.json({ 
+        status: 'ONLINE', 
+        deviceLabel: device.label 
+      });
+    }
+
+    if (device.status === 'QR' && device.qr) {
+      return res.json({ 
+        status: 'QR', 
+        qr: device.qr,
+        deviceLabel: device.label,
+        expiresAt: link.expiresAt
+      });
+    }
+
+    // Device is in other state (OFFLINE, ERROR)
+    return res.json({ 
+      status: 'EXPIRED', 
+      deviceLabel: device.label 
+    });
+  })
+);
+
 // Seed superadmin if missing
 async function ensureSuperadmin() {
   const email = process.env.ADMIN_EMAIL;
@@ -382,6 +437,39 @@ app.post(
 
   await deviceCommandsQueue.add('disconnect', { deviceId: device.id }, { removeOnComplete: true, removeOnFail: false });
   res.json({ ok: true });
+  })
+);
+
+app.post(
+  '/devices/:id/public-link',
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const auth = (req as any).auth as JwtPayload;
+    const scope = getTenantScope(auth);
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'not_found' });
+    if (!scope.isSuperadmin && device.tenantId !== scope.tenantId) return res.status(403).json({ error: 'forbidden' });
+
+    // Generate secure token
+    const token = crypto.randomBytes(32).toString('hex');
+    
+    // Expire after 24 hours or when device connects (whichever comes first)
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24);
+
+    const link = await prisma.publicQrLink.create({
+      data: {
+        deviceId: device.id,
+        token,
+        expiresAt
+      }
+    });
+
+    // Return the public URL (frontend URL)
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const publicUrl = `${frontendUrl}/public/qr/${token}`;
+
+    res.json({ url: publicUrl, token: link.token, expiresAt: link.expiresAt });
   })
 );
 

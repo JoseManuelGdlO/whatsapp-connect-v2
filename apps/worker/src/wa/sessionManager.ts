@@ -76,6 +76,19 @@ export class SessionManager {
           where: { id: deviceId },
           data: { status: 'ONLINE', qr: null, lastSeenAt: new Date(), lastError: null }
         });
+        
+        // Expire all active public QR links for this device
+        await prisma.publicQrLink.updateMany({
+          where: {
+            deviceId,
+            expiresAt: { gt: new Date() } // Only update non-expired links
+          },
+          data: {
+            expiresAt: new Date() // Expire immediately
+          }
+        }).catch(() => {
+          // Ignore errors if table doesn't exist yet or other issues
+        });
       }
 
       if (connection === 'close') {

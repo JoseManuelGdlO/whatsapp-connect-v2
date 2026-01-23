@@ -84,6 +84,7 @@ model Device {
   events    Event[]
   outbound  OutboundMessage[]
   logs      Log[]
+  publicQrLinks PublicQrLink[]
 
   @@index([tenantId])
 }
@@ -187,5 +188,19 @@ model Log {
   @@index([level, createdAt])
   @@index([tenantId, createdAt])
   @@index([deviceId, createdAt])
+}
+
+model PublicQrLink {
+  id        String   @id @default(cuid())
+  deviceId  String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
+  @@index([token])
 }
 
