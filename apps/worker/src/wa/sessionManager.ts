@@ -434,15 +434,15 @@ export class SessionManager {
     }, 10000); // Check every 10 seconds
 
     // Store interval so we can clear it on disconnect
-    const currentEntry = this.sessions.get(deviceId);
-    if (currentEntry) {
-      (currentEntry as any).messagePollInterval = messagePollInterval;
+    const entryForPoll = this.sessions.get(deviceId);
+    if (entryForPoll) {
+      (entryForPoll as any).messagePollInterval = messagePollInterval;
     }
     
     // Log that handler was registered
     await logger.info('messages.upsert handler registered successfully', {
       deviceId,
-      metadata: { handlerRegistered: true, emitIntercepted: !!originalEmit }
+      metadata: { handlerRegistered: true }
     }).catch(() => {});
 
     // Also listen for messages.update to catch status updates (optional, for debugging)
@@ -542,13 +542,13 @@ export class SessionManager {
     }
 
     // Set up a periodic check to verify socket is still active and receiving events
-    const currentEntry = this.sessions.get(deviceId);
-    if (currentEntry) {
-      currentEntry.healthCheckInterval = setInterval(async () => {
+    const entryForHealth = this.sessions.get(deviceId);
+    if (entryForHealth) {
+      entryForHealth.healthCheckInterval = setInterval(async () => {
         const entry = this.sessions.get(deviceId);
         if (!entry || entry.closing) {
-          if (currentEntry.healthCheckInterval) {
-            clearInterval(currentEntry.healthCheckInterval);
+          if (entryForHealth.healthCheckInterval) {
+            clearInterval(entryForHealth.healthCheckInterval);
           }
           return;
         }
