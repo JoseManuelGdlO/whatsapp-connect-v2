@@ -85,8 +85,8 @@ export class SessionManager {
         getMessage,
         markOnlineOnConnect: true, // Ensure we're marked as online to receive messages
         syncFullHistory: false, // Don't sync full history, just new messages
-        shouldSyncHistoryMessage: () => false, // Don't sync old messages
-        shouldIgnoreJid: () => false, // Don't ignore any JIDs
+        // Removed shouldSyncHistoryMessage - it might be blocking all messages
+        // Removed shouldIgnoreJid - using default behavior
         ...(version ? { version } : {})
       });
 
@@ -172,17 +172,29 @@ export class SessionManager {
               userJid: sock.user?.id,
               socketReady: true,
               hasListeners: true,
-              hasUser: !!sock.user
+              hasUser: !!sock.user,
+              // Verify event emitter is working
+              evListeners: {
+                messagesUpsert: (sock.ev as any).listenerCount?.('messages.upsert') ?? 'unknown',
+                connectionUpdate: (sock.ev as any).listenerCount?.('connection.update') ?? 'unknown'
+              }
             }
           }).catch(() => {});
           
-          // Test: Try to send a presence update to verify socket is working
+          // CRITICAL TEST: Verify socket can receive updates by checking if it's actually connected
+          // Sometimes the socket shows as "open" but isn't actually receiving updates
           try {
-            // This is just to verify the socket can send commands
-            // We don't need to await it
-            sock.readMessages([]).catch(() => {});
+            // Try to get chats to verify socket is working
+            const chats = await sock.fetchBlocklist().catch(() => null);
+            await logger.info('Socket connectivity test', {
+              deviceId,
+              metadata: { 
+                canFetchBlocklist: chats !== null,
+                socketActive: true
+              }
+            }).catch(() => {});
           } catch (err) {
-            await logger.warn('Error testing socket after connection', undefined, {
+            await logger.warn('Socket connectivity test failed', undefined, {
               deviceId,
               metadata: { error: err instanceof Error ? err.message : String(err) }
             }).catch(() => {});
