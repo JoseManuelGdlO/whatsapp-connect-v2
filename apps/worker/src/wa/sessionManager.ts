@@ -45,9 +45,43 @@ export class SessionManager {
       save = authState.save;
 
       const version = await this.getVersion();
+      
+      // getMessage is required by Baileys to retrieve messages by key
+      // This is used for decrypting messages and handling poll votes
+      const getMessage = async (key: any) => {
+        try {
+          // Search for the message in stored events
+          const events = await prisma.event.findMany({
+            where: {
+              deviceId,
+              type: 'message.inbound',
+              // Search in rawJson for the message key
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 100 // Limit search to recent messages
+          });
+
+          // Try to find the message by matching key.id and key.remoteJid
+          for (const event of events) {
+            const raw = event.rawJson as any;
+            if (raw?.key?.id === key.id && raw?.key?.remoteJid === key.remoteJid) {
+              return raw;
+            }
+          }
+          return undefined;
+        } catch (err) {
+          await logger.warn('Error in getMessage', undefined, {
+            deviceId,
+            metadata: { error: err instanceof Error ? err.message : String(err) }
+          }).catch(() => {});
+          return undefined;
+        }
+      };
+
       sock = makeWASocket({
         auth: authState.state,
         printQRInTerminal: false,
+        getMessage,
         ...(version ? { version } : {})
       });
 
@@ -105,6 +139,15 @@ export class SessionManager {
             where: { id: deviceId },
             data: { status: 'ONLINE', qr: null, lastSeenAt: new Date(), lastError: null }
           });
+          
+          // Log that connection is open and socket is ready to receive messages
+          await logger.info('Socket connection opened - ready to receive messages', {
+            deviceId,
+            metadata: { 
+              userJid: sock.user?.id,
+              socketReady: true
+            }
+          }).catch(() => {});
           
           // Expire all active public QR links for this device
           await prisma.publicQrLink.updateMany({
@@ -221,9 +264,45 @@ export class SessionManager {
 
     // Also listen for messages.update to catch status updates (optional, for debugging)
     sock.ev.on('messages.update', async (updates: any[]) => {
-      await logger.debug('messages.update event fired', {
+      await logger.info('messages.update event fired', {
         deviceId,
         metadata: { updateCount: updates?.length ?? 0 }
+      }).catch(() => {});
+    });
+
+    // Listen to ALL possible events to see what's actually firing
+    sock.ev.on('messaging-history.set', async (data: any) => {
+      await logger.info('messaging-history.set event fired', {
+        deviceId,
+        metadata: { hasData: !!data }
+      }).catch(() => {});
+    });
+
+    sock.ev.on('chats.update', async (chats: any[]) => {
+      await logger.debug('chats.update event fired', {
+        deviceId,
+        metadata: { chatCount: chats?.length ?? 0 }
+      }).catch(() => {});
+    });
+
+    sock.ev.on('chats.upsert', async (chats: any[]) => {
+      await logger.debug('chats.upsert event fired', {
+        deviceId,
+        metadata: { chatCount: chats?.length ?? 0 }
+      }).catch(() => {});
+    });
+
+    sock.ev.on('presence.update', async (data: any) => {
+      await logger.debug('presence.update event fired', {
+        deviceId,
+        metadata: { hasData: !!data }
+      }).catch(() => {});
+    });
+
+    sock.ev.on('contacts.update', async (contacts: any[]) => {
+      await logger.debug('contacts.update event fired', {
+        deviceId,
+        metadata: { contactCount: contacts?.length ?? 0 }
       }).catch(() => {});
     });
   }
