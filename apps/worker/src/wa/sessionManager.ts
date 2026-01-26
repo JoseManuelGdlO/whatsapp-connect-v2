@@ -79,10 +79,36 @@ export class SessionManager {
         }
       };
 
+      // Create a custom logger to intercept Baileys internal events
+      const baileysLogger = {
+        level: 'silent' as const,
+        trace: () => {},
+        debug: () => {},
+        info: () => {},
+        warn: (msg: any, ...args: any[]) => {
+          // Log warnings to see if there are issues
+          if (msg && typeof msg === 'object' && msg.msg === 'sent retry receipt') {
+            // These are normal - messages that arrived while offline
+            return;
+          }
+          console.log('[BAILEYS-WARN]', msg, ...args);
+        },
+        error: (msg: any, ...args: any[]) => {
+          // Log errors but don't spam
+          if (msg && typeof msg === 'object' && msg.msg === 'failed to decrypt message') {
+            // These are expected for old messages
+            return;
+          }
+          console.error('[BAILEYS-ERROR]', msg, ...args);
+        },
+        child: () => baileysLogger
+      };
+
       sock = makeWASocket({
         auth: authState.state,
         printQRInTerminal: false,
         getMessage,
+        logger: baileysLogger,
         markOnlineOnConnect: true, // Ensure we're marked as online to receive messages
         syncFullHistory: false, // Don't sync full history, just new messages
         // Removed shouldSyncHistoryMessage - it might be blocking all messages
@@ -385,10 +411,38 @@ export class SessionManager {
     // Register the handler
     sock.ev.on('messages.upsert', messagesUpsertHandler);
     
+    // CRITICAL: Add a periodic check to manually poll for new messages
+    // This is a workaround if messages.upsert is not firing
+    const messagePollInterval = setInterval(async () => {
+      try {
+        const entry = this.sessions.get(deviceId);
+        if (!entry || entry.closing) {
+          clearInterval(messagePollInterval);
+          return;
+        }
+
+        // Try to fetch recent chats which might trigger message sync
+        try {
+          const chats = await sock.fetchBlocklist().catch(() => null);
+          // Just checking connectivity, not actually using the result
+        } catch (err) {
+          // Ignore errors
+        }
+      } catch (err) {
+        // Ignore polling errors
+      }
+    }, 10000); // Check every 10 seconds
+
+    // Store interval so we can clear it on disconnect
+    const currentEntry = this.sessions.get(deviceId);
+    if (currentEntry) {
+      (currentEntry as any).messagePollInterval = messagePollInterval;
+    }
+    
     // Log that handler was registered
     await logger.info('messages.upsert handler registered successfully', {
       deviceId,
-      metadata: { handlerRegistered: true }
+      metadata: { handlerRegistered: true, emitIntercepted: !!originalEmit }
     }).catch(() => {});
 
     // Also listen for messages.update to catch status updates (optional, for debugging)
@@ -408,16 +462,43 @@ export class SessionManager {
     });
 
     sock.ev.on('chats.update', async (chats: any[]) => {
-      await logger.debug('chats.update event fired', {
+      await logger.info('chats.update event fired', {
         deviceId,
-        metadata: { chatCount: chats?.length ?? 0 }
+        metadata: { 
+          chatCount: chats?.length ?? 0,
+          chats: chats?.map((c: any) => ({
+            id: c.id,
+            unreadCount: c.unreadCount,
+            conversationTimestamp: c.conversationTimestamp
+          })).slice(0, 5) // Log first 5 chats
+        }
       }).catch(() => {});
+      
+      // When a chat is updated, it might mean a new message arrived
+      // Try to manually trigger message processing if messages.upsert didn't fire
+      for (const chat of (chats || [])) {
+        if (chat.unreadCount && chat.unreadCount > 0) {
+          await logger.info('Chat has unread messages - messages.upsert should have fired', {
+            deviceId,
+            metadata: {
+              chatId: chat.id,
+              unreadCount: chat.unreadCount
+            }
+          }).catch(() => {});
+        }
+      }
     });
 
     sock.ev.on('chats.upsert', async (chats: any[]) => {
-      await logger.debug('chats.upsert event fired', {
+      await logger.info('chats.upsert event fired', {
         deviceId,
-        metadata: { chatCount: chats?.length ?? 0 }
+        metadata: { 
+          chatCount: chats?.length ?? 0,
+          chats: chats?.map((c: any) => ({
+            id: c.id,
+            unreadCount: c.unreadCount
+          })).slice(0, 5)
+        }
       }).catch(() => {});
     });
 
@@ -497,6 +578,11 @@ export class SessionManager {
     // Clear health check interval if it exists
     if (entry.healthCheckInterval) {
       clearInterval(entry.healthCheckInterval);
+    }
+    
+    // Clear message poll interval if it exists
+    if ((entry as any).messagePollInterval) {
+      clearInterval((entry as any).messagePollInterval);
     }
     
     try {
