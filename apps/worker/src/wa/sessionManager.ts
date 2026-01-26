@@ -169,9 +169,42 @@ export class SessionManager {
       }
     });
 
+    // Listen for all message events for debugging
     sock.ev.on('messages.upsert', async (m: any) => {
+      const messageCount = m.messages?.length ?? 0;
+      const eventType = m.type;
+      
+      await logger.info('messages.upsert event fired', {
+        deviceId,
+        metadata: { 
+          messageCount,
+          type: eventType,
+          hasMessages: !!m.messages,
+          fullEvent: JSON.stringify(m).substring(0, 500) // Log first 500 chars for debugging
+        }
+      }).catch(() => {});
+
+      // Only process 'notify' type messages (new messages)
+      // 'append' type messages are historical and should be ignored
+      if (eventType !== 'notify') {
+        await logger.debug('Skipping messages.upsert: not notify type', {
+          deviceId,
+          metadata: { type: eventType, messageCount }
+        }).catch(() => {});
+        return;
+      }
+
+      // Ensure we have messages to process
+      if (!m.messages || m.messages.length === 0) {
+        await logger.debug('messages.upsert has no messages array', {
+          deviceId,
+          metadata: { type: eventType }
+        }).catch(() => {});
+        return;
+      }
+
       try {
-        await handleMessagesUpsert({ deviceId, sock, messages: m.messages ?? [] });
+        await handleMessagesUpsert({ deviceId, sock, messages: m.messages });
       } catch (e: any) {
         await prisma.device.update({
           where: { id: deviceId },
@@ -181,9 +214,17 @@ export class SessionManager {
         await logger.error('Failed to handle messages.upsert', e, {
           deviceId,
           tenantId: device?.tenantId,
-          metadata: { messageCount: m.messages?.length ?? 0 }
+          metadata: { messageCount, error: e?.message, stack: e?.stack }
         }).catch(() => {});
       }
+    });
+
+    // Also listen for messages.update to catch status updates (optional, for debugging)
+    sock.ev.on('messages.update', async (updates: any[]) => {
+      await logger.debug('messages.update event fired', {
+        deviceId,
+        metadata: { updateCount: updates?.length ?? 0 }
+      }).catch(() => {});
     });
   }
 
