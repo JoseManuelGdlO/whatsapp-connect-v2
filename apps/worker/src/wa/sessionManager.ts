@@ -85,6 +85,8 @@ export class SessionManager {
         getMessage,
         markOnlineOnConnect: true, // Ensure we're marked as online to receive messages
         syncFullHistory: false, // Don't sync full history, just new messages
+        shouldSyncHistoryMessage: () => false, // Don't sync old messages
+        shouldIgnoreJid: () => false, // Don't ignore any JIDs
         ...(version ? { version } : {})
       });
 
@@ -420,6 +422,31 @@ export class SessionManager {
         metadata: { contactCount: contacts?.length ?? 0 }
       }).catch(() => {});
     });
+
+    // CRITICAL: Add a catch-all listener to see ALL events being fired
+    // This will help us understand what events Baileys is actually emitting
+    const allEventNames = [
+      'messages.upsert', 'messages.update', 'messages.delete',
+      'chats.update', 'chats.upsert', 'chats.delete',
+      'contacts.update', 'contacts.upsert',
+      'presence.update', 'connection.update', 'creds.update',
+      'messaging-history.set', 'call', 'group-participants.update'
+    ];
+    
+    for (const eventName of allEventNames) {
+      sock.ev.on(eventName as any, async (data: any) => {
+        await logger.info(`Event fired: ${eventName}`, {
+          deviceId,
+          metadata: { 
+            eventName,
+            hasData: !!data,
+            dataType: typeof data,
+            isArray: Array.isArray(data),
+            dataLength: Array.isArray(data) ? data.length : 'N/A'
+          }
+        }).catch(() => {});
+      });
+    }
 
     // Set up a periodic check to verify socket is still active and receiving events
     const currentEntry = this.sessions.get(deviceId);
