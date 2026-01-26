@@ -13,9 +13,61 @@ export function startOutboundMessagesWorker() {
   const worker = new Worker<OutboundJob>(
     'outbound_messages',
     async (job) => {
+      await logger.info('Processing outbound message job', undefined, {
+        metadata: { 
+          jobId: job.id,
+          outboundMessageId: job.data.outboundMessageId,
+          attempt: job.attemptsMade + 1
+        }
+      }).catch(() => {});
+
       const row = await prisma.outboundMessage.findUnique({ where: { id: job.data.outboundMessageId } });
       if (!row) {
         await logger.warn(`Outbound message ${job.data.outboundMessageId} not found`).catch(() => {});
+        return;
+      }
+
+      // Update status to PROCESSING to indicate we're working on it
+      await prisma.outboundMessage.update({
+        where: { id: row.id },
+        data: { status: 'PROCESSING' }
+      }).catch(() => {});
+
+      await logger.info('Outbound message status updated to PROCESSING', undefined, {
+        tenantId: row.tenantId,
+        deviceId: row.deviceId,
+        metadata: { 
+          outboundMessageId: row.id,
+          to: row.to,
+          queuedAt: row.createdAt.toISOString()
+        }
+      }).catch(() => {});
+
+      // Check device status in DB
+      const device = await prisma.device.findUnique({ where: { id: row.deviceId } }).catch(() => null);
+      if (!device) {
+        await prisma.outboundMessage.update({
+          where: { id: row.id },
+          data: { status: 'FAILED', error: 'device_not_found' }
+        }).catch(() => {});
+        await logger.warn('Device not found for outbound message', undefined, {
+          tenantId: row.tenantId,
+          deviceId: row.deviceId,
+          metadata: { outboundMessageId: row.id }
+        }).catch(() => {});
+        return;
+      }
+
+      if (device.status !== 'ONLINE') {
+        await prisma.outboundMessage.update({
+          where: { id: row.id },
+          data: { status: 'FAILED', error: `device_not_online:${device.status}` }
+        }).catch(() => {});
+        await logger.warn('Device not online for outbound message', undefined, {
+          tenantId: row.tenantId,
+          deviceId: row.deviceId,
+          metadata: { outboundMessageId: row.id, deviceStatus: device.status }
+        }).catch(() => {});
         return;
       }
 
@@ -24,8 +76,26 @@ export function startOutboundMessagesWorker() {
         await prisma.outboundMessage.update({
           where: { id: row.id },
           data: { status: 'FAILED', error: 'device_not_connected' }
-        });
-        await logger.warn('Device not connected for outbound message', undefined, {
+        }).catch(() => {});
+        await logger.warn('Device socket not available for outbound message', undefined, {
+          tenantId: row.tenantId,
+          deviceId: row.deviceId,
+          metadata: { 
+            outboundMessageId: row.id,
+            deviceStatus: device.status,
+            note: 'Device marked as ONLINE but socket not found in sessionManager'
+          }
+        }).catch(() => {});
+        return;
+      }
+
+      // Verify socket has user (means it's authenticated)
+      if (!sock.user?.id) {
+        await prisma.outboundMessage.update({
+          where: { id: row.id },
+          data: { status: 'FAILED', error: 'socket_not_authenticated' }
+        }).catch(() => {});
+        await logger.warn('Socket not authenticated for outbound message', undefined, {
           tenantId: row.tenantId,
           deviceId: row.deviceId,
           metadata: { outboundMessageId: row.id }
@@ -117,6 +187,15 @@ export function startOutboundMessagesWorker() {
     { connection: redis, concurrency: 5 }
   );
 
+  worker.on('completed', async (job) => {
+    await logger.info('Outbound message job completed', undefined, {
+      metadata: { 
+        jobId: job.id,
+        outboundMessageId: (job.data as any).outboundMessageId
+      }
+    }).catch(() => {});
+  });
+
   worker.on('failed', async (job, err) => {
     if (!job) return;
     try {
@@ -126,7 +205,14 @@ export function startOutboundMessagesWorker() {
       });
       await logger.error(
         `Outbound message job failed (outboundMessageId: ${(job.data as any).outboundMessageId})`,
-        err
+        err,
+        {
+          metadata: {
+            jobId: job.id,
+            attempts: job.attemptsMade,
+            willRetry: job.attemptsMade < (job.opts?.attempts ?? 0)
+          }
+        }
       ).catch(() => {});
     } catch (updateErr) {
       const error = updateErr instanceof Error ? updateErr : new Error(String(updateErr));
@@ -134,6 +220,18 @@ export function startOutboundMessagesWorker() {
     }
   });
 
-  logger.info('[worker] outbound_messages worker started').catch(() => {});
+  worker.on('error', async (err) => {
+    await logger.error('Outbound messages worker error', err).catch(() => {});
+  });
+
+  worker.on('stalled', async (jobId) => {
+    await logger.warn('Outbound message job stalled', undefined, {
+      metadata: { jobId }
+    }).catch(() => {});
+  });
+
+  logger.info('[worker] outbound_messages worker started', undefined, {
+    metadata: { concurrency: 5 }
+  }).catch(() => {});
   return worker;
 }

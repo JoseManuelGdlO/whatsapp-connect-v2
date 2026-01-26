@@ -29,6 +29,7 @@ enum DeliveryStatus {
 
 enum OutboundStatus {
   QUEUED
+  PROCESSING
   SENT
   FAILED
 }
