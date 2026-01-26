@@ -265,8 +265,7 @@ export class SessionManager {
         metadata: { 
           messageCount,
           type: eventType,
-          hasMessages: !!m.messages,
-          fullEvent: JSON.stringify(m).substring(0, 500) // Log first 500 chars for debugging
+          hasMessages: !!m.messages
         }
       }).catch(() => {});
 
@@ -289,8 +288,67 @@ export class SessionManager {
         return;
       }
 
+      // Filter out messages that can't be decrypted or are from us
+      const processableMessages: any[] = [];
+      
+      for (const msg of m.messages) {
+        // Skip if message has no key
+        if (!msg.key) {
+          await logger.debug('Skipping message: no key', {
+            deviceId,
+            metadata: { message: JSON.stringify(msg).substring(0, 200) }
+          }).catch(() => {});
+          continue;
+        }
+        
+        // Skip if fromMe (outbound messages)
+        if (msg.key.fromMe) {
+          await logger.debug('Skipping message: fromMe=true', {
+            deviceId,
+            metadata: { messageId: msg.key.id, remoteJid: msg.key.remoteJid }
+          }).catch(() => {});
+          continue;
+        }
+        
+        // Skip if message has no content (couldn't be decrypted)
+        if (!msg.message) {
+          await logger.debug('Skipping message: no content (decryption failed or old message)', {
+            deviceId,
+            metadata: { 
+              messageId: msg.key.id, 
+              remoteJid: msg.key.remoteJid,
+              pushName: msg.pushName,
+              messageTimestamp: msg.messageTimestamp
+            }
+          }).catch(() => {});
+          continue;
+        }
+        
+        // This is a processable message
+        processableMessages.push(msg);
+      }
+
+      if (processableMessages.length === 0) {
+        await logger.debug('No processable messages after filtering', {
+          deviceId,
+          metadata: { 
+            totalMessages: m.messages.length,
+            filteredOut: m.messages.length
+          }
+        }).catch(() => {});
+        return;
+      }
+
+      await logger.info('Processing processable messages', {
+        deviceId,
+        metadata: { 
+          totalMessages: m.messages.length,
+          processableMessages: processableMessages.length
+        }
+      }).catch(() => {});
+
       try {
-        await handleMessagesUpsert({ deviceId, sock, messages: m.messages });
+        await handleMessagesUpsert({ deviceId, sock, messages: processableMessages });
       } catch (e: any) {
         await prisma.device.update({
           where: { id: deviceId },
