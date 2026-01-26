@@ -256,6 +256,52 @@ app.get(
   })
 );
 
+app.delete(
+  '/tenants/:id',
+  authRequired,
+  requireRole(UserRole.SUPERADMIN),
+  asyncHandler(async (req, res) => {
+    const tenantId = req.params.id;
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+    if (!tenant) return res.status(404).json({ error: 'not_found' });
+
+    // Delete the tenant (cascade will handle related records)
+    await prisma.tenant.delete({ where: { id: tenantId } });
+    res.json({ ok: true });
+  })
+);
+
+app.get(
+  '/users',
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const auth = (req as any).auth as JwtPayload;
+    const tenantId = req.query.tenantId as string | undefined;
+    
+    let where: any = {};
+    if (auth.role === UserRole.SUPERADMIN) {
+      // SUPERADMIN can see all users or filter by tenantId
+      if (tenantId) {
+        where.tenantId = tenantId;
+      }
+    } else if (auth.role === UserRole.TENANT_ADMIN) {
+      // TENANT_ADMIN can only see users from their tenant
+      if (!auth.tenantId) return res.status(400).json({ error: 'tenant_required' });
+      where.tenantId = auth.tenantId;
+    } else {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const users = await prisma.user.findMany({
+      where,
+      select: { id: true, email: true, role: true, tenantId: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 100
+    });
+    res.json(users);
+  })
+);
+
 app.post(
   '/users',
   authRequired,
@@ -291,6 +337,37 @@ app.post(
     select: { id: true, email: true, role: true, tenantId: true, createdAt: true }
   });
   res.status(201).json(user);
+  })
+);
+
+app.delete(
+  '/users/:id',
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const auth = (req as any).auth as JwtPayload;
+    const userId = req.params.id;
+    
+    // Cannot delete yourself
+    if (auth.sub === userId) {
+      return res.status(400).json({ error: 'cannot_delete_self' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return res.status(404).json({ error: 'not_found' });
+
+    // SUPERADMIN can delete any user; TENANT_ADMIN can only delete users from their tenant
+    if (auth.role === UserRole.SUPERADMIN) {
+      // ok
+    } else if (auth.role === UserRole.TENANT_ADMIN) {
+      if (!auth.tenantId) return res.status(400).json({ error: 'tenant_required' });
+      if (user.tenantId !== auth.tenantId) return res.status(403).json({ error: 'forbidden' });
+      if (user.role === UserRole.SUPERADMIN) return res.status(403).json({ error: 'forbidden' });
+    } else {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    await prisma.user.delete({ where: { id: userId } });
+    res.json({ ok: true });
   })
 );
 
@@ -472,6 +549,29 @@ app.post(
     const publicUrl = `${frontendUrl}/public/qr/${token}`;
 
     res.json({ url: publicUrl, token: link.token, expiresAt: link.expiresAt });
+  })
+);
+
+app.delete(
+  '/devices/:id',
+  authRequired,
+  asyncHandler(async (req, res) => {
+    const auth = (req as any).auth as JwtPayload;
+    const scope = getTenantScope(auth);
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'not_found' });
+    if (!scope.isSuperadmin && device.tenantId !== scope.tenantId) return res.status(403).json({ error: 'forbidden' });
+
+    // If device is connected (ONLINE or QR), disconnect it first
+    if (device.status === 'ONLINE' || device.status === 'QR') {
+      await deviceCommandsQueue.add('disconnect', { deviceId: device.id }, { removeOnComplete: true, removeOnFail: false });
+      // Wait a bit for the disconnect to process
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // Delete the device (cascade will handle related records)
+    await prisma.device.delete({ where: { id: device.id } });
+    res.json({ ok: true });
   })
 );
 

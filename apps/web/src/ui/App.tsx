@@ -100,7 +100,7 @@ function TenantSelector() {
 function AdminPage() {
   const { token, user } = useAuth();
   const { tenantIdOverride, setTenantIdOverride } = useTenantId();
-  const [active, setActive] = useState<'tenants' | 'users'>('tenants');
+  const [active, setActive] = useState<'tenants' | 'users' | 'devices'>('tenants');
 
   if (user?.role !== 'SUPERADMIN') return <div className="card">Forbidden</div>;
 
@@ -111,6 +111,7 @@ function AdminPage() {
         <div className="actions">
           <button onClick={() => setActive('tenants')}>Tenants</button>
           <button onClick={() => setActive('users')}>Users</button>
+          <button onClick={() => setActive('devices')}>Devices</button>
         </div>
         <p className="muted">Tip: al crear/seleccionar un tenant, guardamos su TenantId para usarlo en Devices/Webhooks.</p>
       </div>
@@ -123,8 +124,10 @@ function AdminPage() {
             localStorage.setItem('tenantId', v);
           }}
         />
-      ) : (
+      ) : active === 'users' ? (
         <UsersAdmin token={token!} />
+      ) : (
+        <DevicesAdmin token={token!} tenantIdOverride={tenantIdOverride} />
       )}
     </div>
   );
@@ -146,6 +149,23 @@ function TenantsAdmin({
   useEffect(() => {
     apiJson<Tenant[]>('/tenants', token).then(setTenants).catch((e) => setMsg(e?.message ?? 'error'));
   }, [token]);
+
+  const handleDelete = async (tenantId: string, tenantName: string) => {
+    if (!confirm(`¿Estás seguro de eliminar el tenant "${tenantName}"?\n\nEsto eliminará TODOS los dispositivos, usuarios, webhooks y eventos asociados. Esta acción no se puede deshacer.`)) {
+      return;
+    }
+    try {
+      await apiJson(`/tenants/${tenantId}`, token, { method: 'DELETE' });
+      setTenants((prev) => prev.filter((t) => t.id !== tenantId));
+      if (tenantIdOverride === tenantId) {
+        setTenantIdOverride('');
+        localStorage.removeItem('tenantId');
+      }
+      setMsg(`Tenant "${tenantName}" eliminado`);
+    } catch (err: any) {
+      setMsg(`Error: ${err?.message ?? 'No se pudo eliminar el tenant'}`);
+    }
+  };
 
   return (
     <>
@@ -176,20 +196,27 @@ function TenantsAdmin({
         <h3>Tenants</h3>
         <div className="list">
           {tenants.map((t) => (
-            <button
-              key={t.id}
-              className={`row ${tenantIdOverride === t.id ? 'active' : ''}`}
-              onClick={() => {
-                setTenantIdOverride(t.id);
-                setMsg(`Tenant seleccionado: ${t.id}`);
-              }}
-            >
-              <div>
-                <div className="rowTitle">{t.name}</div>
-                <div className="rowMeta">{t.id}</div>
-              </div>
-              <div className="rowRight">{t.status}</div>
-            </button>
+            <div key={t.id} className={`row ${tenantIdOverride === t.id ? 'active' : ''}`} style={{ cursor: 'default' }}>
+              <button
+                style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                onClick={() => {
+                  setTenantIdOverride(t.id);
+                  setMsg(`Tenant seleccionado: ${t.id}`);
+                }}
+              >
+                <div>
+                  <div className="rowTitle">{t.name}</div>
+                  <div className="rowMeta">{t.id}</div>
+                </div>
+                <div className="rowRight">{t.status}</div>
+              </button>
+              <button
+                onClick={() => handleDelete(t.id, t.name)}
+                style={{ marginLeft: '8px', padding: '4px 8px', fontSize: '12px' }}
+              >
+                Eliminar
+              </button>
+            </div>
           ))}
         </div>
       </div>
@@ -197,58 +224,227 @@ function TenantsAdmin({
   );
 }
 
+type User = {
+  id: string;
+  email: string;
+  role: string;
+  tenantId: string | null;
+  createdAt: string;
+};
+
 function UsersAdmin({ token }: { token: string }) {
+  const { user: currentUser } = useAuth();
   const { tenantIdOverride } = useTenantId();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('12345678');
   const [role, setRole] = useState<'TENANT_ADMIN' | 'AGENT'>('TENANT_ADMIN');
   const [tenantId, setTenantId] = useState(() => tenantIdOverride);
   const [msg, setMsg] = useState<string | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
+  const [filterTenantId, setFilterTenantId] = useState<string>('');
 
   useEffect(() => {
     setTenantId(tenantIdOverride);
   }, [tenantIdOverride]);
 
+  useEffect(() => {
+    const loadUsers = async () => {
+      try {
+        const query = filterTenantId ? `?tenantId=${encodeURIComponent(filterTenantId)}` : '';
+        const data = await apiJson<User[]>(`/users${query}`, token);
+        setUsers(data);
+      } catch (err: any) {
+        setMsg(`Error al cargar usuarios: ${err?.message ?? 'error'}`);
+      }
+    };
+    loadUsers();
+  }, [token, filterTenantId]);
+
+  const handleDelete = async (userId: string, userEmail: string) => {
+    if (!confirm(`¿Estás seguro de eliminar el usuario "${userEmail}"?`)) {
+      return;
+    }
+    try {
+      await apiJson(`/users/${userId}`, token, { method: 'DELETE' });
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
+      setMsg(`Usuario "${userEmail}" eliminado`);
+    } catch (err: any) {
+      setMsg(`Error: ${err?.message ?? 'No se pudo eliminar el usuario'}`);
+    }
+  };
+
   return (
-    <div className="card">
-      <h3>Crear usuario</h3>
-      <p className="muted">Esto llama `POST /users`. Para SUPERADMIN puedes crear usuarios en cualquier tenant.</p>
-      <div className="form">
+    <>
+      <div className="card">
+        <h3>Crear usuario</h3>
+        <p className="muted">Esto llama `POST /users`. Para SUPERADMIN puedes crear usuarios en cualquier tenant.</p>
+        <div className="form">
+          <label>
+            TenantId
+            <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} placeholder="tenantId..." />
+          </label>
+          <label>
+            Email
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user@cliente.com" />
+          </label>
+          <label>
+            Password (min 8)
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </label>
+          <label>
+            Role
+            <select value={role} onChange={(e) => setRole(e.target.value as any)}>
+              <option value="TENANT_ADMIN">TENANT_ADMIN</option>
+              <option value="AGENT">AGENT</option>
+            </select>
+          </label>
+          <button
+            onClick={async () => {
+              setMsg(null);
+              const created = await apiJson<any>('/users', token, {
+                method: 'POST',
+                body: JSON.stringify({ email, password, role, tenantId: tenantId || null })
+              });
+              setMsg(`Usuario creado: ${created.email} (role=${created.role})`);
+              setEmail('');
+              // Reload users list
+              const query = filterTenantId ? `?tenantId=${encodeURIComponent(filterTenantId)}` : '';
+              const data = await apiJson<User[]>(`/users${query}`, token);
+              setUsers(data);
+            }}
+          >
+            Crear usuario
+          </button>
+          {msg ? <div className="muted">{msg}</div> : null}
+        </div>
+      </div>
+      <div className="card">
+        <h3>Usuarios</h3>
         <label>
-          TenantId
-          <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} placeholder="tenantId..." />
+          Filtrar por TenantId (dejar vacío para ver todos)
+          <input
+            value={filterTenantId}
+            onChange={(e) => setFilterTenantId(e.target.value)}
+            placeholder="tenantId..."
+          />
         </label>
+        <div className="list" style={{ marginTop: '12px' }}>
+          {users.map((u) => (
+            <div key={u.id} className="row" style={{ cursor: 'default' }}>
+              <div>
+                <div className="rowTitle">{u.email}</div>
+                <div className="rowMeta">
+                  {u.role} {u.tenantId ? `· ${u.tenantId}` : '· Sin tenant'}
+                </div>
+              </div>
+              <div className="actions">
+                {u.id !== currentUser?.id ? (
+                  <button
+                    onClick={() => handleDelete(u.id, u.email)}
+                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                  >
+                    Eliminar
+                  </button>
+                ) : (
+                  <span className="muted" style={{ fontSize: '12px' }}>Tú</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenantIdOverride: string }) {
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [filterTenantId, setFilterTenantId] = useState<string>(tenantIdOverride);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadDevices = async () => {
+      if (!filterTenantId) {
+        setDevices([]);
+        return;
+      }
+      try {
+        const data = await apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(filterTenantId)}`, token);
+        setDevices(data);
+      } catch (err: any) {
+        setMsg(`Error al cargar dispositivos: ${err?.message ?? 'error'}`);
+      }
+    };
+    loadDevices();
+  }, [token, filterTenantId]);
+
+  const handleDelete = async (deviceId: string, deviceLabel: string, deviceStatus: string) => {
+    const isConnected = deviceStatus === 'ONLINE' || deviceStatus === 'QR';
+    const warning = isConnected
+      ? `El dispositivo "${deviceLabel}" está ${deviceStatus === 'ONLINE' ? 'conectado' : 'mostrando QR'}. Se desconectará automáticamente antes de eliminarlo.\n\n¿Estás seguro de eliminar este dispositivo?`
+      : `¿Estás seguro de eliminar el dispositivo "${deviceLabel}"?`;
+    
+    if (!confirm(warning)) {
+      return;
+    }
+    try {
+      await apiJson(`/devices/${deviceId}`, token, { method: 'DELETE' });
+      setDevices((prev) => prev.filter((d) => d.id !== deviceId));
+      setMsg(`Dispositivo "${deviceLabel}" eliminado`);
+    } catch (err: any) {
+      setMsg(`Error: ${err?.message ?? 'No se pudo eliminar el dispositivo'}`);
+    }
+  };
+
+  return (
+    <>
+      <div className="card">
+        <h3>Gestionar Dispositivos</h3>
         <label>
-          Email
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user@cliente.com" />
+          Filtrar por TenantId
+          <input
+            value={filterTenantId}
+            onChange={(e) => setFilterTenantId(e.target.value)}
+            placeholder="tenantId..."
+          />
         </label>
-        <label>
-          Password (min 8)
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </label>
-        <label>
-          Role
-          <select value={role} onChange={(e) => setRole(e.target.value as any)}>
-            <option value="TENANT_ADMIN">TENANT_ADMIN</option>
-            <option value="AGENT">AGENT</option>
-          </select>
-        </label>
-        <button
-          onClick={async () => {
-            setMsg(null);
-            const created = await apiJson<any>('/users', token, {
-              method: 'POST',
-              body: JSON.stringify({ email, password, role, tenantId: tenantId || null })
-            });
-            setMsg(`Usuario creado: ${created.email} (role=${created.role})`);
-            setEmail('');
-          }}
-        >
-          Crear usuario
-        </button>
         {msg ? <div className="muted">{msg}</div> : null}
       </div>
-    </div>
+      <div className="card">
+        <h3>Dispositivos</h3>
+        <div className="list">
+          {devices.map((d) => (
+            <div key={d.id} className="row" style={{ cursor: 'default' }}>
+              <div>
+                <div className="rowTitle">{d.label}</div>
+                <div className="rowMeta">
+                  {d.status}
+                  {d.lastError ? ` · ${d.lastError}` : ''}
+                </div>
+              </div>
+              <div className="actions">
+                <button
+                  onClick={() => handleDelete(d.id, d.label, d.status)}
+                  style={{ padding: '4px 8px', fontSize: '12px' }}
+                >
+                  Eliminar
+                </button>
+              </div>
+            </div>
+          ))}
+          {devices.length === 0 && filterTenantId && (
+            <div className="muted" style={{ padding: '12px' }}>
+              No hay dispositivos para este tenant
+            </div>
+          )}
+          {!filterTenantId && (
+            <div className="muted" style={{ padding: '12px' }}>
+              Ingresa un TenantId para ver dispositivos
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -333,16 +529,46 @@ function DevicesPage() {
 
         <div className="list">
           {devices.map((d) => (
-            <button key={d.id} className={`row ${selectedId === d.id ? 'active' : ''}`} onClick={() => setSelectedId(d.id)}>
-              <div>
-                <div className="rowTitle">{d.label}</div>
-                <div className="rowMeta">
-                  {d.status}
-                  {d.lastError ? ` · ${d.lastError}` : ''}
+            <div key={d.id} className={`row ${selectedId === d.id ? 'active' : ''}`} style={{ display: 'flex', alignItems: 'center' }}>
+              <button
+                style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                onClick={() => setSelectedId(d.id)}
+              >
+                <div>
+                  <div className="rowTitle">{d.label}</div>
+                  <div className="rowMeta">
+                    {d.status}
+                    {d.lastError ? ` · ${d.lastError}` : ''}
+                  </div>
                 </div>
-              </div>
-              <div className="rowRight">{d.status === 'QR' ? 'QR' : d.status === 'ONLINE' ? 'OK' : ''}</div>
-            </button>
+                <div className="rowRight">{d.status === 'QR' ? 'QR' : d.status === 'ONLINE' ? 'OK' : ''}</div>
+              </button>
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const isConnected = d.status === 'ONLINE' || d.status === 'QR';
+                  const warning = isConnected
+                    ? `El dispositivo "${d.label}" está ${d.status === 'ONLINE' ? 'conectado' : 'mostrando QR'}. Se desconectará automáticamente antes de eliminarlo.\n\n¿Estás seguro de eliminar este dispositivo?`
+                    : `¿Estás seguro de eliminar el dispositivo "${d.label}"?`;
+                  
+                  if (!confirm(warning)) {
+                    return;
+                  }
+                  try {
+                    await apiJson(`/devices/${d.id}`, token!, { method: 'DELETE' });
+                    setDevices((prev) => prev.filter((x) => x.id !== d.id));
+                    if (selectedId === d.id) {
+                      setSelectedId(null);
+                    }
+                  } catch (err: any) {
+                    alert(`Error: ${err?.message ?? 'No se pudo eliminar el dispositivo'}`);
+                  }
+                }}
+                style={{ marginLeft: '8px', padding: '4px 8px', fontSize: '12px' }}
+              >
+                Eliminar
+              </button>
+            </div>
           ))}
         </div>
       </div>
