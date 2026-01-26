@@ -13,7 +13,7 @@ export function startOutboundMessagesWorker() {
   const worker = new Worker<OutboundJob>(
     'outbound_messages',
     async (job) => {
-      await logger.info('Processing outbound message job', undefined, {
+      await logger.info('Processing outbound message job', {
         metadata: { 
           jobId: job.id,
           outboundMessageId: job.data.outboundMessageId,
@@ -33,7 +33,7 @@ export function startOutboundMessagesWorker() {
         data: { status: 'PROCESSING' }
       }).catch(() => {});
 
-      await logger.info('Outbound message status updated to PROCESSING', undefined, {
+      await logger.info('Outbound message status updated to PROCESSING', {
         tenantId: row.tenantId,
         deviceId: row.deviceId,
         metadata: { 
@@ -50,7 +50,7 @@ export function startOutboundMessagesWorker() {
           where: { id: row.id },
           data: { status: 'FAILED', error: 'device_not_found' }
         }).catch(() => {});
-        await logger.warn('Device not found for outbound message', undefined, {
+        await logger.warn('Device not found for outbound message', {
           tenantId: row.tenantId,
           deviceId: row.deviceId,
           metadata: { outboundMessageId: row.id }
@@ -63,7 +63,7 @@ export function startOutboundMessagesWorker() {
           where: { id: row.id },
           data: { status: 'FAILED', error: `device_not_online:${device.status}` }
         }).catch(() => {});
-        await logger.warn('Device not online for outbound message', undefined, {
+        await logger.warn('Device not online for outbound message', {
           tenantId: row.tenantId,
           deviceId: row.deviceId,
           metadata: { outboundMessageId: row.id, deviceStatus: device.status }
@@ -77,7 +77,7 @@ export function startOutboundMessagesWorker() {
           where: { id: row.id },
           data: { status: 'FAILED', error: 'device_not_connected' }
         }).catch(() => {});
-        await logger.warn('Device socket not available for outbound message', undefined, {
+        await logger.warn('Device socket not available for outbound message', {
           tenantId: row.tenantId,
           deviceId: row.deviceId,
           metadata: { 
@@ -95,7 +95,7 @@ export function startOutboundMessagesWorker() {
           where: { id: row.id },
           data: { status: 'FAILED', error: 'socket_not_authenticated' }
         }).catch(() => {});
-        await logger.warn('Socket not authenticated for outbound message', undefined, {
+        await logger.warn('Socket not authenticated for outbound message', {
           tenantId: row.tenantId,
           deviceId: row.deviceId,
           metadata: { outboundMessageId: row.id }
@@ -108,7 +108,7 @@ export function startOutboundMessagesWorker() {
           where: { id: row.id },
           data: { status: 'FAILED', error: `unsupported_type:${row.type}` }
         });
-        await logger.warn(`Unsupported message type: ${row.type}`, undefined, {
+        await logger.warn(`Unsupported message type: ${row.type}`, {
           tenantId: row.tenantId,
           deviceId: row.deviceId,
           metadata: { outboundMessageId: row.id, type: row.type }
@@ -134,7 +134,7 @@ export function startOutboundMessagesWorker() {
 
       // Log if message was queued for too long (potential cause of WhatsApp "waiting" message)
       if (processingDelay > 30000) {
-        await logger.warn('Outbound message delayed in queue', undefined, {
+        await logger.warn('Outbound message delayed in queue', {
           tenantId: row.tenantId,
           deviceId: row.deviceId,
           metadata: { 
@@ -159,7 +159,7 @@ export function startOutboundMessagesWorker() {
 
         // Log slow sends
         if (sendDuration > 5000) {
-          await logger.warn('Slow outbound message send', undefined, {
+          await logger.warn('Slow outbound message send', {
             tenantId: row.tenantId,
             deviceId: row.deviceId,
             metadata: { 
@@ -188,7 +188,7 @@ export function startOutboundMessagesWorker() {
   );
 
   worker.on('completed', async (job) => {
-    await logger.info('Outbound message job completed', undefined, {
+    await logger.info('Outbound message job completed', {
       metadata: { 
         jobId: job.id,
         outboundMessageId: (job.data as any).outboundMessageId
@@ -225,12 +225,12 @@ export function startOutboundMessagesWorker() {
   });
 
   worker.on('stalled', async (jobId) => {
-    await logger.warn('Outbound message job stalled', undefined, {
+    await logger.warn('Outbound message job stalled', {
       metadata: { jobId }
     }).catch(() => {});
   });
 
-  logger.info('[worker] outbound_messages worker started', undefined, {
+  logger.info('[worker] outbound_messages worker started', {
     metadata: { concurrency: 5 }
   }).catch(() => {});
   return worker;
