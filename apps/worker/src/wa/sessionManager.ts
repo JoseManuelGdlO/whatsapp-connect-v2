@@ -32,22 +32,38 @@ export class SessionManager {
   async connect(deviceId: string) {
     if (this.sessions.has(deviceId)) return;
 
-    await prisma.device.update({
-      where: { id: deviceId },
-      data: { status: 'OFFLINE', lastError: null }
-    });
+    try {
+      await prisma.device.update({
+        where: { id: deviceId },
+        data: { status: 'OFFLINE', lastError: null }
+      });
 
-    const { state, save } = await loadAuthState(deviceId);
+      const { state, save } = await loadAuthState(deviceId);
 
-    const version = await this.getVersion();
-    const sock = makeWASocket({
-      auth: state,
-      printQRInTerminal: false,
-      ...(version ? { version } : {})
-    });
+      const version = await this.getVersion();
+      const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: false,
+        ...(version ? { version } : {})
+      });
 
-    const entry: SessionEntry = { socket: sock, deviceId, closing: false };
-    this.sessions.set(deviceId, entry);
+      const entry: SessionEntry = { socket: sock, deviceId, closing: false };
+      this.sessions.set(deviceId, entry);
+    } catch (err: any) {
+      await prisma.device.update({
+        where: { id: deviceId },
+        data: {
+          status: 'ERROR',
+          lastError: `connect_error: ${err?.message ?? 'unknown'}`
+        }
+      });
+      const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
+      await logger.error('Failed to connect device', err, {
+        deviceId,
+        tenantId: device?.tenantId
+      }).catch(() => {});
+      throw err;
+    }
 
     sock.ev.on('creds.update', async () => {
       try {
@@ -64,65 +80,88 @@ export class SessionManager {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
-      if (qr) {
-        await prisma.device.update({
-          where: { id: deviceId },
-          data: { status: 'QR', qr, lastError: null }
-        });
-      }
-
-      if (connection === 'open') {
-        await prisma.device.update({
-          where: { id: deviceId },
-          data: { status: 'ONLINE', qr: null, lastSeenAt: new Date(), lastError: null }
-        });
-        
-        // Expire all active public QR links for this device
-        await prisma.publicQrLink.updateMany({
-          where: {
-            deviceId,
-            expiresAt: { gt: new Date() } // Only update non-expired links
-          },
-          data: {
-            expiresAt: new Date() // Expire immediately
-          }
-        }).catch(() => {
-          // Ignore errors if table doesn't exist yet or other issues
-        });
-      }
-
-      if (connection === 'close') {
-        const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        const reason = statusCode ? DisconnectReason[statusCode] : undefined;
-        const errMsg = (lastDisconnect?.error as any)?.message as string | undefined;
-        const errorMessage = reason ?? errMsg ?? 'connection_closed';
-
-        await prisma.device.update({
-          where: { id: deviceId },
-          data: {
-            status: 'OFFLINE',
-            qr: null,
-            lastError: errorMessage
-          }
-        });
-
-        const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
-        await logger.warn(`Device connection closed: ${errorMessage}`, undefined, {
-          deviceId,
-          tenantId: device?.tenantId,
-          metadata: { statusCode, reason, willReconnect: statusCode !== DisconnectReason.loggedOut }
-        }).catch(() => {});
-
-        const current = this.sessions.get(deviceId);
-        if (!current || current.closing) return;
-
-        // Basic reconnect (unless logged out)
-        if (statusCode !== DisconnectReason.loggedOut) {
-          this.sessions.delete(deviceId);
-          setTimeout(() => void this.connect(deviceId), 2000);
-        } else {
-          this.sessions.delete(deviceId);
+      try {
+        if (qr) {
+          await prisma.device.update({
+            where: { id: deviceId },
+            data: { status: 'QR', qr, lastError: null }
+          });
         }
+
+        // Handle connecting state - update to show we're trying to connect
+        if (connection === 'connecting') {
+          await prisma.device.update({
+            where: { id: deviceId },
+            data: { status: 'OFFLINE', lastError: null }
+          });
+        }
+
+        if (connection === 'open') {
+          await prisma.device.update({
+            where: { id: deviceId },
+            data: { status: 'ONLINE', qr: null, lastSeenAt: new Date(), lastError: null }
+          });
+          
+          // Expire all active public QR links for this device
+          await prisma.publicQrLink.updateMany({
+            where: {
+              deviceId,
+              expiresAt: { gt: new Date() } // Only update non-expired links
+            },
+            data: {
+              expiresAt: new Date() // Expire immediately
+            }
+          }).catch(() => {
+            // Ignore errors if table doesn't exist yet or other issues
+          });
+        }
+
+        if (connection === 'close') {
+          const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+          const reason = statusCode ? DisconnectReason[statusCode] : undefined;
+          const errMsg = (lastDisconnect?.error as any)?.message as string | undefined;
+          const errorMessage = reason ?? errMsg ?? 'connection_closed';
+
+          await prisma.device.update({
+            where: { id: deviceId },
+            data: {
+              status: 'OFFLINE',
+              qr: null,
+              lastError: errorMessage
+            }
+          });
+
+          const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
+          await logger.warn(`Device connection closed: ${errorMessage}`, undefined, {
+            deviceId,
+            tenantId: device?.tenantId,
+            metadata: { statusCode, reason, willReconnect: statusCode !== DisconnectReason.loggedOut }
+          }).catch(() => {});
+
+          const current = this.sessions.get(deviceId);
+          if (!current || current.closing) return;
+
+          // Basic reconnect (unless logged out)
+          if (statusCode !== DisconnectReason.loggedOut) {
+            this.sessions.delete(deviceId);
+            setTimeout(() => void this.connect(deviceId), 2000);
+          } else {
+            this.sessions.delete(deviceId);
+          }
+        }
+      } catch (err: any) {
+        await prisma.device.update({
+          where: { id: deviceId },
+          data: {
+            status: 'ERROR',
+            lastError: `connection.update_error: ${err?.message ?? 'unknown'}`
+          }
+        });
+        const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
+        await logger.error('Error in connection.update handler', err, {
+          deviceId,
+          tenantId: device?.tenantId
+        }).catch(() => {});
       }
     });
 

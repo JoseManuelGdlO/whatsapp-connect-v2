@@ -52,6 +52,25 @@ type Tenant = { id: string; name: string; status: string; createdAt: string };
 function useTenantId() {
   const { user } = useAuth();
   const [tenantIdOverride, setTenantIdOverride] = useState<string>(() => localStorage.getItem('tenantId') ?? '');
+  
+  // Clear tenantIdOverride if user is not SUPERADMIN or if user changed
+  useEffect(() => {
+    if (!user) {
+      // User logged out, clear tenantIdOverride
+      if (tenantIdOverride) {
+        setTenantIdOverride('');
+        localStorage.removeItem('tenantId');
+      }
+      return;
+    }
+    
+    // Non-superadmin users should not have tenantIdOverride
+    if (user.role !== 'SUPERADMIN' && tenantIdOverride) {
+      setTenantIdOverride('');
+      localStorage.removeItem('tenantId');
+    }
+  }, [user?.id, user?.role, tenantIdOverride]);
+  
   const tenantId = useMemo(() => {
     if (user?.role === 'SUPERADMIN') return tenantIdOverride || null;
     return user?.tenantId ?? null;
@@ -243,6 +262,7 @@ function DevicesPage() {
 
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState('');
+  const [connecting, setConnecting] = useState(false);
 
   const [testTo, setTestTo] = useState('');
   const [testText, setTestText] = useState('ping');
@@ -334,7 +354,35 @@ function DevicesPage() {
         ) : (
           <>
             <div className="actions">
-              <button onClick={async () => apiJson(`/devices/${selected.id}/connect`, token!, { method: 'POST' })}>Connect</button>
+              <button
+                disabled={connecting}
+                onClick={async () => {
+                  if (!token || !selected) return;
+                  setConnecting(true);
+                  try {
+                    await apiJson(`/devices/${selected.id}/connect`, token!, { method: 'POST' });
+                    // Force immediate status update
+                    setTimeout(async () => {
+                      try {
+                        const d = await apiJson<Device>(`/devices/${selected.id}/status`, token);
+                        setDevices((prev) => prev.map((x) => (x.id === d.id ? d : x)));
+                        if (d.qr) {
+                          const url = await QRCode.toDataURL(d.qr);
+                          setQrDataUrl(url);
+                        }
+                      } catch {
+                        // ignore
+                      }
+                    }, 500);
+                  } catch (err: any) {
+                    alert(`Error al conectar: ${err?.message ?? 'Error desconocido'}`);
+                  } finally {
+                    setConnecting(false);
+                  }
+                }}
+              >
+                {connecting ? 'Conectando...' : 'Connect'}
+              </button>
               <button onClick={async () => apiJson(`/devices/${selected.id}/disconnect`, token!, { method: 'POST' })}>
                 Disconnect
               </button>
@@ -365,7 +413,18 @@ function DevicesPage() {
             </div>
 
             {selected.status === 'QR' && qrDataUrl ? <img src={qrDataUrl} alt="qr" style={{ width: 260, height: 260 }} /> : null}
-            {selected.lastError ? <div className="error">Error: {selected.lastError}</div> : null}
+            {selected.status === 'ERROR' && selected.lastError ? (
+              <div className="error">
+                <strong>Error:</strong> {selected.lastError}
+                <br />
+                <small>Intenta hacer "Reset session" y luego "Connect" de nuevo.</small>
+              </div>
+            ) : selected.lastError ? (
+              <div className="error">Error: {selected.lastError}</div>
+            ) : null}
+            {selected.status === 'OFFLINE' && !selected.lastError && !connecting ? (
+              <div className="muted">Estado: OFFLINE. Haz clic en "Connect" para iniciar la conexión.</div>
+            ) : null}
 
             <hr style={{ margin: '16px 0', border: 0, borderTop: '1px solid #e2e8f0' }} />
 
