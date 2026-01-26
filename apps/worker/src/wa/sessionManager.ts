@@ -32,17 +32,21 @@ export class SessionManager {
   async connect(deviceId: string) {
     if (this.sessions.has(deviceId)) return;
 
+    let sock: WASocket;
+    let save: () => Promise<void>;
+
     try {
       await prisma.device.update({
         where: { id: deviceId },
         data: { status: 'OFFLINE', lastError: null }
       });
 
-      const { state, save } = await loadAuthState(deviceId);
+      const authState = await loadAuthState(deviceId);
+      save = authState.save;
 
       const version = await this.getVersion();
-      const sock = makeWASocket({
-        auth: state,
+      sock = makeWASocket({
+        auth: authState.state,
         printQRInTerminal: false,
         ...(version ? { version } : {})
       });
@@ -77,7 +81,7 @@ export class SessionManager {
       }
     });
 
-    sock.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', async (update: any) => {
       const { connection, lastDisconnect, qr } = update;
 
       try {
@@ -165,7 +169,7 @@ export class SessionManager {
       }
     });
 
-    sock.ev.on('messages.upsert', async (m) => {
+    sock.ev.on('messages.upsert', async (m: any) => {
       try {
         await handleMessagesUpsert({ deviceId, sock, messages: m.messages ?? [] });
       } catch (e: any) {
