@@ -12,6 +12,7 @@ type SessionEntry = {
   socket: WASocket;
   deviceId: string;
   closing: boolean;
+  healthCheckInterval?: NodeJS.Timeout;
 };
 
 export class SessionManager {
@@ -82,11 +83,33 @@ export class SessionManager {
         auth: authState.state,
         printQRInTerminal: false,
         getMessage,
+        markOnlineOnConnect: true, // Ensure we're marked as online to receive messages
+        syncFullHistory: false, // Don't sync full history, just new messages
         ...(version ? { version } : {})
       });
 
-      const entry: SessionEntry = { socket: sock, deviceId, closing: false };
+      // Log immediately that socket was created
+      await logger.info('Socket created for device', {
+        deviceId,
+        metadata: { 
+          hasAuth: !!authState.state,
+          hasVersion: !!version,
+          socketCreated: true
+        }
+      }).catch(() => {});
+
+      const entry: SessionEntry = { 
+        socket: sock, 
+        deviceId, 
+        closing: false 
+      };
       this.sessions.set(deviceId, entry);
+      
+      // Log that listeners will be registered
+      await logger.info('Registering event listeners for device', {
+        deviceId,
+        metadata: { listeners: ['connection.update', 'creds.update', 'messages.upsert', 'messages.update'] }
+      }).catch(() => {});
     } catch (err: any) {
       await prisma.device.update({
         where: { id: deviceId },
@@ -145,9 +168,25 @@ export class SessionManager {
             deviceId,
             metadata: { 
               userJid: sock.user?.id,
-              socketReady: true
+              socketReady: true,
+              hasListeners: true,
+              // Verify socket is actually connected
+              socketState: sock.ws?.readyState,
+              socketUrl: sock.ws?.url
             }
           }).catch(() => {});
+          
+          // Test: Try to send a presence update to verify socket is working
+          try {
+            // This is just to verify the socket can send commands
+            // We don't need to await it
+            sock.readMessages([]).catch(() => {});
+          } catch (err) {
+            await logger.warn('Error testing socket after connection', undefined, {
+              deviceId,
+              metadata: { error: err instanceof Error ? err.message : String(err) }
+            }).catch(() => {});
+          }
           
           // Expire all active public QR links for this device
           await prisma.publicQrLink.updateMany({
@@ -211,6 +250,12 @@ export class SessionManager {
         }).catch(() => {});
       }
     });
+
+    // Log that we're registering the messages.upsert listener
+    await logger.info('Registering messages.upsert listener', {
+      deviceId,
+      metadata: { listenerRegistered: true }
+    }).catch(() => {});
 
     // Listen for all message events for debugging
     sock.ev.on('messages.upsert', async (m: any) => {
@@ -305,12 +350,48 @@ export class SessionManager {
         metadata: { contactCount: contacts?.length ?? 0 }
       }).catch(() => {});
     });
+
+    // Set up a periodic check to verify socket is still active and receiving events
+    const currentEntry = this.sessions.get(deviceId);
+    if (currentEntry) {
+      currentEntry.healthCheckInterval = setInterval(async () => {
+        const entry = this.sessions.get(deviceId);
+        if (!entry || entry.closing) {
+          if (currentEntry.healthCheckInterval) {
+            clearInterval(currentEntry.healthCheckInterval);
+          }
+          return;
+        }
+
+        try {
+          const isOnline = sock.user && sock.ws?.readyState === 1; // WebSocket.OPEN = 1
+          await logger.debug('Socket health check', {
+            deviceId,
+            metadata: {
+              isOnline,
+              hasUser: !!sock.user,
+              userJid: sock.user?.id,
+              wsReadyState: sock.ws?.readyState,
+              wsUrl: sock.ws?.url?.substring(0, 50) // Log first 50 chars only
+            }
+          }).catch(() => {});
+        } catch (err) {
+          // Ignore health check errors
+        }
+      }, 60000); // Check every 60 seconds
+    }
   }
 
   async disconnect(deviceId: string) {
     const entry = this.sessions.get(deviceId);
     if (!entry) return;
     entry.closing = true;
+    
+    // Clear health check interval if it exists
+    if (entry.healthCheckInterval) {
+      clearInterval(entry.healthCheckInterval);
+    }
+    
     try {
       entry.socket.end(new Error('disconnect'));
     } finally {
