@@ -170,9 +170,7 @@ export class SessionManager {
               userJid: sock.user?.id,
               socketReady: true,
               hasListeners: true,
-              // Verify socket is actually connected
-              socketState: sock.ws?.readyState,
-              socketUrl: sock.ws?.url
+              hasUser: !!sock.user
             }
           }).catch(() => {});
           
@@ -364,15 +362,13 @@ export class SessionManager {
         }
 
         try {
-          const isOnline = sock.user && sock.ws?.readyState === 1; // WebSocket.OPEN = 1
+          const isOnline = !!sock.user; // If we have a user, socket is connected
           await logger.debug('Socket health check', {
             deviceId,
             metadata: {
               isOnline,
               hasUser: !!sock.user,
-              userJid: sock.user?.id,
-              wsReadyState: sock.ws?.readyState,
-              wsUrl: sock.ws?.url?.substring(0, 50) // Log first 50 chars only
+              userJid: sock.user?.id
             }
           }).catch(() => {});
         } catch (err) {
