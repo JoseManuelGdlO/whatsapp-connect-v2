@@ -14,7 +14,16 @@ const port = Number(process.env.WORKER_HEALTH_PORT ?? 3030);
 const logger = createLogger(prisma, 'worker');
 
 // Simple stdout heartbeat for now; worker will run BullMQ processors.
-logger.info(`Worker starting (healthPort=${port})`).catch(() => {});
+logger.info(`Worker starting (healthPort=${port})`).catch((err) => {
+  console.error('[CRITICAL] Failed to log worker start:', err);
+});
+
+// Test database logging immediately
+logger.info('TEST: Database logging test').then(() => {
+  console.log('[TEST] Database logging test completed successfully');
+}).catch((err) => {
+  console.error('[CRITICAL] Database logging test FAILED:', err);
+});
 
 assertCryptoKeyConfigured();
 

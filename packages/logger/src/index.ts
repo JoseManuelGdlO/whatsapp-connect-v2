@@ -30,8 +30,9 @@ export class DatabaseLogger {
       consoleMethod(`${prefix} ${message}`);
     }
 
-    // Only save ERROR level to database to avoid saturating it
-    if (level !== 'ERROR') {
+    // Save ERROR and INFO levels to database (INFO for important diagnostic messages)
+    // DEBUG and WARN only go to console to avoid saturating the database
+    if (level !== 'ERROR' && level !== 'INFO') {
       return;
     }
 
@@ -40,21 +41,32 @@ export class DatabaseLogger {
       const errorMessage = error instanceof Error ? error.message : error;
       const errorStack = error instanceof Error ? error.stack : undefined;
 
-      await this.prisma.log.create({
-        data: {
-          level,
-          service: this.service,
-          message,
-          error: errorStack || errorMessage || undefined,
-          metadata: mergedContext.metadata ? (mergedContext.metadata as any) : undefined,
-          tenantId: mergedContext.tenantId || undefined,
-          deviceId: mergedContext.deviceId || undefined
-        }
+      const logData = {
+        level,
+        service: this.service,
+        message,
+        error: errorStack || errorMessage || undefined,
+        metadata: mergedContext.metadata ? (mergedContext.metadata as any) : undefined,
+        tenantId: mergedContext.tenantId || undefined,
+        deviceId: mergedContext.deviceId || undefined
+      };
+
+      await this.prisma.log.create({ data: logData });
+      
+      // Log success to console for debugging (only for first few logs to avoid spam)
+      if (level === 'INFO' && Math.random() < 0.1) { // 10% of INFO logs
+        console.log(`[${this.service}] [DB-LOG-SUCCESS] Saved to database: ${message.substring(0, 50)}...`);
+      }
+    } catch (logError: any) {
+      // ALWAYS show database logging errors - this is critical
+      console.error(`[${this.service}] [CRITICAL] Failed to write log to database:`, logError);
+      console.error(`[${this.service}] [CRITICAL] Error details:`, {
+        message: logError?.message,
+        code: logError?.code,
+        meta: logError?.meta,
+        stack: logError?.stack?.substring(0, 500)
       });
-    } catch (logError) {
-      // Fallback to console if DB logging fails
-      console.error(`[${this.service}] Failed to write log to database:`, logError);
-      console.error(`[${this.service}] Original log: [${level}] ${message}`, error);
+      console.error(`[${this.service}] [CRITICAL] Original log that failed: [${level}] ${message}`, error);
     }
   }
 

@@ -252,11 +252,16 @@ export class SessionManager {
     // Log that we're registering the messages.upsert listener
     await logger.info('Registering messages.upsert listener', {
       deviceId,
-      metadata: { listenerRegistered: true }
+      metadata: { 
+        listenerRegistered: true,
+        socketHasEv: !!sock.ev,
+        socketHasOn: typeof sock.ev.on === 'function'
+      }
     }).catch(() => {});
 
+    // CRITICAL: Register the listener BEFORE connection is fully open
     // Listen for all message events for debugging
-    sock.ev.on('messages.upsert', async (m: any) => {
+    const messagesUpsertHandler = async (m: any) => {
       const messageCount = m.messages?.length ?? 0;
       const eventType = m.type;
       
@@ -361,7 +366,16 @@ export class SessionManager {
           metadata: { messageCount, error: e?.message, stack: e?.stack }
         }).catch(() => {});
       }
-    });
+    };
+    
+    // Register the handler
+    sock.ev.on('messages.upsert', messagesUpsertHandler);
+    
+    // Log that handler was registered
+    await logger.info('messages.upsert handler registered successfully', {
+      deviceId,
+      metadata: { handlerRegistered: true }
+    }).catch(() => {});
 
     // Also listen for messages.update to catch status updates (optional, for debugging)
     sock.ev.on('messages.update', async (updates: any[]) => {
