@@ -34,6 +34,7 @@ export class SessionManager {
 
     let sock: WASocket;
     let save: () => Promise<void>;
+    let clearCorruptedSessions: () => Promise<void>;
 
     try {
       await prisma.device.update({
@@ -43,6 +44,7 @@ export class SessionManager {
 
       const authState = await loadAuthState(deviceId);
       save = authState.save;
+      clearCorruptedSessions = authState.clearCorruptedSessions;
 
       // Implement getMessage to help Baileys recover from sync errors
       // This function allows Baileys to retrieve previous messages when validating message sequence
@@ -122,7 +124,12 @@ export class SessionManager {
 
     sock.ev.on('creds.update', async () => {
       try {
-        await save();
+        // Save immediately on creds update (critical)
+        if ((save as any).immediate) {
+          await (save as any).immediate();
+        } else {
+          await save();
+        }
       } catch (e: any) {
         await prisma.device.update({
           where: { id: deviceId },
@@ -225,15 +232,30 @@ export class SessionManager {
       const errorMessage = err?.message ?? String(err);
       const isSessionError = errorMessage.includes('Over 2000 messages into the future') || 
                             errorMessage.includes('SessionError') ||
-                            errorMessage.includes('message counter');
+                            errorMessage.includes('message counter') ||
+                            errorMessage.includes('Failed to decrypt message');
       
       if (isSessionError) {
         const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
-        await logger.error('Session synchronization error detected - will reconnect', err, {
+        await logger.error('Session synchronization error detected - clearing corrupted sessions and reconnecting', err, {
           deviceId,
           tenantId: device?.tenantId,
-          metadata: { errorMessage, willReconnect: true }
+          metadata: { errorMessage, willReconnect: true, clearingSessions: true }
         }).catch(() => {});
+        
+        // Clear corrupted session keys before reconnecting
+        try {
+          await clearCorruptedSessions();
+          await logger.info('Cleared corrupted session keys', undefined, {
+            deviceId,
+            tenantId: device?.tenantId
+          }).catch(() => {});
+        } catch (clearErr) {
+          await logger.error('Failed to clear corrupted sessions', clearErr, {
+            deviceId,
+            tenantId: device?.tenantId
+          }).catch(() => {});
+        }
         
         // Update device status
         await prisma.device.update({
@@ -254,8 +276,8 @@ export class SessionManager {
           } catch {
             // Ignore errors during disconnect
           }
-          // Reconnect after a short delay
-          setTimeout(() => void this.connect(deviceId), 3000);
+          // Reconnect after a short delay to allow state to be cleared
+          setTimeout(() => void this.connect(deviceId), 5000);
         }
         return true; // Error was handled
       }
@@ -265,6 +287,10 @@ export class SessionManager {
     sock.ev.on('messages.upsert', async (m: any) => {
       try {
         await handleMessagesUpsert({ deviceId, sock, messages: m.messages ?? [] });
+        // Save state after processing messages to persist session key updates
+        await save().catch(() => {
+          // Ignore save errors - non-critical
+        });
       } catch (e: any) {
         // Try to handle session sync errors
         const handled = await handleSessionSyncError(e);
@@ -282,6 +308,22 @@ export class SessionManager {
             metadata: { messageCount: m.messages?.length ?? 0 }
           }).catch(() => {});
         }
+      }
+    });
+
+    // Set up periodic state saving to ensure session keys are persisted
+    const saveInterval = setInterval(async () => {
+      try {
+        await save();
+      } catch (err) {
+        // Ignore periodic save errors
+      }
+    }, 30000); // Save every 30 seconds
+
+    // Clean up interval when session closes
+    sock.ev.on('connection.update', async (update: any) => {
+      if (update.connection === 'close') {
+        clearInterval(saveInterval);
       }
     });
 

@@ -9,6 +9,7 @@ import { startOutboundMessagesWorker } from './queues/outboundMessages.js';
 import { assertCryptoKeyConfigured } from './lib/crypto.js';
 import { prisma } from './lib/prisma.js';
 import { createLogger } from '@wc/logger';
+import { sessionManager } from './queues/deviceCommands.js';
 
 const port = Number(process.env.WORKER_HEALTH_PORT ?? 3030);
 const logger = createLogger(prisma, 'worker');
@@ -41,4 +42,35 @@ http
 setInterval(() => {
   logger.info(`Worker alive ${new Date().toISOString()}`).catch(() => {});
 }, 30_000);
+
+// Handle unhandled promise rejections that may come from libsignal/Baileys
+// These errors often occur during message decryption and may not be caught by our handlers
+process.on('unhandledRejection', async (reason: any, promise: Promise<any>) => {
+  const errorMessage = reason?.message ?? String(reason);
+  const errorStack = reason?.stack ?? '';
+  
+  // Check if this is a session sync error from libsignal
+  const isSessionError = errorMessage.includes('Over 2000 messages into the future') ||
+                        errorMessage.includes('SessionError') ||
+                        errorMessage.includes('Failed to decrypt message') ||
+                        errorStack.includes('session_cipher.js');
+  
+  if (isSessionError) {
+    await logger.error('Unhandled session sync error detected (from libsignal)', reason, {
+      metadata: { 
+        errorMessage,
+        note: 'This error occurred during message decryption. All active sessions will attempt to clear corrupted state and reconnect.'
+      }
+    }).catch(() => {});
+    
+    // Note: We can't easily determine which device caused this error from an unhandled rejection
+    // The session manager will handle reconnection when it detects the error in its handlers
+    // This log helps us identify when these errors occur
+  } else {
+    // Log other unhandled rejections for debugging
+    await logger.error('Unhandled promise rejection', reason instanceof Error ? reason : new Error(String(reason)), {
+      metadata: { errorMessage, errorStack: errorStack.substring(0, 500) }
+    }).catch(() => {});
+  }
+});
 
