@@ -415,8 +415,10 @@ function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenantIdOver
         <div className="list">
           {devices.map((d) => (
             <div key={d.id} className="row" style={{ cursor: 'default' }}>
-              <div>
-                <div className="rowTitle">{d.label}</div>
+              <div style={{ flex: 1 }}>
+                <div className="rowTitle" style={{ marginBottom: '4px' }}>
+                  {d.label || 'Sin nombre'}
+                </div>
                 <div className="rowMeta">
                   {d.status}
                   {d.lastError ? ` · ${d.lastError}` : ''}
@@ -510,17 +512,33 @@ function DevicesPage() {
         <TenantSelector />
 
         <div className="actions" style={{ marginTop: 12 }}>
-          <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Nuevo device label" />
+          <input 
+            value={newLabel} 
+            onChange={(e) => setNewLabel(e.target.value)} 
+            placeholder="Nuevo device label" 
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                const button = e.currentTarget.parentElement?.querySelector('button');
+                button?.click();
+              }
+            }}
+          />
           <button
             onClick={async () => {
               if (!token) return;
               if (!tenantId) return alert('tenantId requerido');
-              const body: any = { label: newLabel || 'Device' };
+              const label = newLabel.trim() || 'Device';
+              const body: any = { label };
               if (user?.role === 'SUPERADMIN') body.tenantId = tenantId;
-              const d = await apiJson<Device>('/devices', token, { method: 'POST', body: JSON.stringify(body) });
-              setDevices((prev) => [d, ...prev]);
-              setSelectedId(d.id);
-              setNewLabel('');
+              try {
+                const d = await apiJson<Device>('/devices', token, { method: 'POST', body: JSON.stringify(body) });
+                setDevices((prev) => [d, ...prev]);
+                setSelectedId(d.id);
+                setNewLabel('');
+              } catch (err: any) {
+                alert(`Error al crear dispositivo: ${err?.message ?? 'Error desconocido'}`);
+              }
             }}
           >
             Crear
@@ -534,14 +552,18 @@ function DevicesPage() {
                 style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
                 onClick={() => setSelectedId(d.id)}
               >
-                <div>
-                  <div className="rowTitle">{d.label}</div>
+                <div style={{ flex: 1 }}>
+                  <div className="rowTitle" style={{ marginBottom: '4px' }}>
+                    {d.label || 'Sin nombre'}
+                  </div>
                   <div className="rowMeta">
                     {d.status}
                     {d.lastError ? ` · ${d.lastError}` : ''}
                   </div>
                 </div>
-                <div className="rowRight">{d.status === 'QR' ? 'QR' : d.status === 'ONLINE' ? 'OK' : ''}</div>
+                <div className="rowRight" style={{ marginLeft: '12px' }}>
+                  {d.status === 'QR' ? 'QR' : d.status === 'ONLINE' ? 'OK' : ''}
+                </div>
               </button>
               <button
                 onClick={async (e) => {
