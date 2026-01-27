@@ -416,7 +416,7 @@ function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenantIdOver
           {devices.map((d) => (
             <div key={d.id} className="row" style={{ cursor: 'default' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px' }}>
+                <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px', color: '#000000' }}>
                   {d.label || d.id || 'Device sin nombre'}
                 </div>
                 <div className="rowMeta" style={{ fontSize: '12px', color: '#64748b' }}>
@@ -569,7 +569,7 @@ function DevicesPage() {
                 onClick={() => setSelectedId(d.id)}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px' }}>
+                  <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px', color: '#000000' }}>
                     {d.label || d.id || 'Device sin nombre'}
                   </div>
                   <div className="rowMeta" style={{ fontSize: '12px', color: '#64748b' }}>
