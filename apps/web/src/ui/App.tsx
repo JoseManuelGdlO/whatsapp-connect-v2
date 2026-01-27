@@ -415,11 +415,11 @@ function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenantIdOver
         <div className="list">
           {devices.map((d) => (
             <div key={d.id} className="row" style={{ cursor: 'default' }}>
-              <div style={{ flex: 1 }}>
-                <div className="rowTitle" style={{ marginBottom: '4px' }}>
-                  {d.label || 'Sin nombre'}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px' }}>
+                  {d.label || d.id || 'Device sin nombre'}
                 </div>
-                <div className="rowMeta">
+                <div className="rowMeta" style={{ fontSize: '12px', color: '#64748b' }}>
                   {d.status}
                   {d.lastError ? ` · ${d.lastError}` : ''}
                 </div>
@@ -468,7 +468,16 @@ function DevicesPage() {
 
   useEffect(() => {
     if (!token || !tenantId) return;
-    apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantId)}`, token).then(setDevices).catch(() => {});
+    apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantId)}`, token)
+      .then((devices) => {
+        // Ensure all devices have a label
+        const devicesWithLabels = devices.map((d) => ({
+          ...d,
+          label: d.label || 'Device sin nombre'
+        }));
+        setDevices(devicesWithLabels);
+      })
+      .catch(() => {});
   }, [token, tenantId]);
 
   useEffect(() => {
@@ -479,7 +488,14 @@ function DevicesPage() {
       try {
         const d = await apiJson<Device>(`/devices/${selectedId}/status`, token);
         if (!alive) return;
-        setDevices((prev) => prev.map((x) => (x.id === d.id ? d : x)));
+        // Preserve label when updating device status to avoid losing it
+        setDevices((prev) => prev.map((x) => {
+          if (x.id === d.id) {
+            // Keep the existing label if the new one is missing or empty
+            return { ...d, label: d.label || x.label || 'Device' };
+          }
+          return x;
+        }));
 
         if (d.qr) {
           const url = await QRCode.toDataURL(d.qr);
@@ -552,11 +568,11 @@ function DevicesPage() {
                 style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
                 onClick={() => setSelectedId(d.id)}
               >
-                <div style={{ flex: 1 }}>
-                  <div className="rowTitle" style={{ marginBottom: '4px' }}>
-                    {d.label || 'Sin nombre'}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px' }}>
+                    {d.label || d.id || 'Device sin nombre'}
                   </div>
-                  <div className="rowMeta">
+                  <div className="rowMeta" style={{ fontSize: '12px', color: '#64748b' }}>
                     {d.status}
                     {d.lastError ? ` · ${d.lastError}` : ''}
                   </div>
