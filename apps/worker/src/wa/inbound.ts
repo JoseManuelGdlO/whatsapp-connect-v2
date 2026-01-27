@@ -15,76 +15,17 @@ export async function handleMessagesUpsert(params: {
   sock: WASocket;
   messages: proto.IWebMessageInfo[];
 }) {
-  // Log that we received messages
-  await logger.info('messages.upsert received', {
-    deviceId: params.deviceId,
-    metadata: { messageCount: params.messages.length }
-  }).catch(() => {});
-
   const device = await prisma.device.findUnique({ where: { id: params.deviceId } });
-  if (!device) {
-    await logger.warn('Device not found in handleMessagesUpsert', undefined, {
-      deviceId: params.deviceId,
-      metadata: { messageCount: params.messages.length }
-    }).catch(() => {});
-    return;
-  }
+  if (!device) return;
 
   const endpoints = await prisma.webhookEndpoint.findMany({
     where: { tenantId: device.tenantId, enabled: true }
   });
 
-  await logger.debug('Processing messages', {
-    deviceId: params.deviceId,
-    tenantId: device.tenantId,
-    metadata: { 
-      messageCount: params.messages.length,
-      endpointCount: endpoints.length
-    }
-  }).catch(() => {});
-
   for (const msg of params.messages) {
     const key = msg.key;
-    
-    // Log why messages are being skipped
-    if (!key?.remoteJid) {
-      await logger.debug('Skipping message: no remoteJid', {
-        deviceId: params.deviceId,
-        tenantId: device.tenantId,
-        metadata: { messageId: key?.id, key: JSON.stringify(key) }
-      }).catch(() => {});
-      continue;
-    }
-    
-    if (key.fromMe) {
-      await logger.debug('Skipping message: fromMe=true (outbound)', {
-        deviceId: params.deviceId,
-        tenantId: device.tenantId,
-        metadata: { messageId: key.id, remoteJid: key.remoteJid }
-      }).catch(() => {});
-      continue; // inbound only for now
-    }
-
-    // Check if message has content
-    if (!msg.message) {
-      await logger.debug('Skipping message: no message content', {
-        deviceId: params.deviceId,
-        tenantId: device.tenantId,
-        metadata: { messageId: key.id, remoteJid: key.remoteJid }
-      }).catch(() => {});
-      continue;
-    }
-
-    await logger.info('Processing inbound message', {
-      deviceId: params.deviceId,
-      tenantId: device.tenantId,
-      metadata: { 
-        messageId: key.id, 
-        remoteJid: key.remoteJid,
-        hasMessage: !!msg.message,
-        messageType: Object.keys(msg.message || {})[0] || 'unknown'
-      }
-    }).catch(() => {});
+    if (!key?.remoteJid) continue;
+    if (key.fromMe) continue; // inbound only for now
 
     const messageReceivedAt = Date.now();
     const messageTimestamp = typeof msg.messageTimestamp === 'number' 
@@ -132,24 +73,6 @@ export async function handleMessagesUpsert(params: {
     });
 
     // fan-out to all enabled endpoints for this tenant
-    if (endpoints.length === 0) {
-      await logger.warn('No webhook endpoints found for tenant', undefined, {
-        deviceId: params.deviceId,
-        tenantId: device.tenantId,
-        metadata: { messageId: key.id, eventId: event.id }
-      }).catch(() => {});
-    } else {
-      await logger.info('Dispatching to webhook endpoints', {
-        deviceId: params.deviceId,
-        tenantId: device.tenantId,
-        metadata: { 
-          messageId: key.id, 
-          eventId: event.id,
-          endpointCount: endpoints.length
-        }
-      }).catch(() => {});
-    }
-
     for (const endpoint of endpoints) {
       const delivery = await prisma.webhookDelivery.create({
         data: {
