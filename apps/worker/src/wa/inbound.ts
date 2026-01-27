@@ -39,18 +39,20 @@ export async function handleMessagesUpsert(params: {
     try {
       await params.sock.readMessages([key]).catch((err) => {
         // Log but don't fail - acknowledgment is best effort
-        logger.warn('Failed to acknowledge incoming message', undefined, {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        logger.warn('Failed to acknowledge incoming message', errorMsg, {
           deviceId: params.deviceId,
           tenantId: device.tenantId,
-          metadata: { messageId: key.id, remoteJid: key.remoteJid, error: err?.message }
+          metadata: { messageId: key.id, remoteJid: key.remoteJid, error: errorMsg }
         }).catch(() => {});
       });
     } catch (err) {
       // Ignore acknowledgment errors - continue processing
-      logger.warn('Exception while acknowledging message', undefined, {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.warn('Exception while acknowledging message', errorMsg, {
         deviceId: params.deviceId,
         tenantId: device.tenantId,
-        metadata: { messageId: key.id, error: err instanceof Error ? err.message : String(err) }
+        metadata: { messageId: key.id, error: errorMsg }
       }).catch(() => {});
     }
 
@@ -95,7 +97,7 @@ export async function handleMessagesUpsert(params: {
     // Log processing time to help identify delays
     const processingTime = Date.now() - messageReceivedAt;
     if (processingTime > 1000) {
-      logger.warn('Slow message processing detected', undefined, {
+      logger.warn('Slow message processing detected', '', {
         deviceId: params.deviceId,
         tenantId: device.tenantId,
         metadata: { 

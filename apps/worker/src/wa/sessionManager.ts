@@ -194,7 +194,7 @@ export class SessionManager {
           });
 
           const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
-          await logger.warn(`Device connection closed: ${errorMessage}`, undefined, {
+          await logger.warn(`Device connection closed: ${errorMessage}`, '', {
             deviceId,
             tenantId: device?.tenantId,
             metadata: { statusCode, reason, willReconnect: statusCode !== DisconnectReason.loggedOut }
@@ -246,12 +246,13 @@ export class SessionManager {
         // Clear corrupted session keys before reconnecting
         try {
           await clearCorruptedSessions();
-          await logger.info('Cleared corrupted session keys', undefined, {
+          await logger.info('Cleared corrupted session keys', {
             deviceId,
             tenantId: device?.tenantId
           }).catch(() => {});
         } catch (clearErr) {
-          await logger.error('Failed to clear corrupted sessions', clearErr, {
+          const error = clearErr instanceof Error ? clearErr : new Error(String(clearErr));
+          await logger.error('Failed to clear corrupted sessions', error, {
             deviceId,
             tenantId: device?.tenantId
           }).catch(() => {});
