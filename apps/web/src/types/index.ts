@@ -32,3 +32,19 @@ export type Tenant = {
   status: string;
   createdAt: string;
 };
+
+export type Conversation = {
+  remoteJid: string;
+  lastMessageAt: string;
+  messageCount: number;
+  stuck?: boolean;
+};
+
+export type ChatMessage = {
+  id: string;
+  type: 'inbound' | 'outbound';
+  text: string;
+  timestamp: string;
+  fromMe: boolean;
+  status?: string;
+};

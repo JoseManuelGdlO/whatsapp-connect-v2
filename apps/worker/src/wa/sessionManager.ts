@@ -297,12 +297,12 @@ export class SessionManager {
         await save().catch(() => {
           // Ignore save errors - non-critical
         });
-        // If we received a stub "No matching sessions", clear that sender's keys and reconnect at most once per 10 min per device
+        // If we received a stub "No matching sessions", clear that sender's keys in BD only (no reset/reconnect)
         if (upsertResult?.clearSenderAndReconnect) {
           const now = Date.now();
           const last = this.lastClearReconnectAt.get(deviceId) ?? 0;
           if (now - last < CLEAR_RECONNECT_DEBOUNCE_MS) {
-            await logger.warn('Skipping clear+reconnect (debounced), device stays connected', '', {
+            await logger.warn('Skipping clear sender sessions (debounced)', '', {
               deviceId,
               metadata: { remoteJid: upsertResult.clearSenderAndReconnect.remoteJid, nextAllowedInSec: Math.ceil((CLEAR_RECONNECT_DEBOUNCE_MS - (now - last)) / 1000) }
             }).catch(() => {});
@@ -312,7 +312,7 @@ export class SessionManager {
             const jids = [remoteJid, senderPn].filter(Boolean) as string[];
             try {
               await clearSessionsForJids(deviceId, jids);
-              await logger.info('Cleared session keys for sender, reconnecting', {
+              await logger.info('Cleared session keys for sender (BD only)', {
                 deviceId,
                 metadata: { remoteJid, senderPn, jids }
               }).catch(() => {});
@@ -321,17 +321,6 @@ export class SessionManager {
                 deviceId,
                 metadata: { remoteJid, senderPn }
               }).catch(() => {});
-            }
-            const current = this.sessions.get(deviceId);
-            if (current && !current.closing) {
-              current.closing = true;
-              this.sessions.delete(deviceId);
-              try {
-                sock.end(new Error('no_matching_sessions_reconnect'));
-              } catch {
-                // Ignore errors during disconnect
-              }
-              setTimeout(() => void this.connect(deviceId), 5000);
             }
           }
         }

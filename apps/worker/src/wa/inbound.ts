@@ -32,6 +32,8 @@ export async function handleMessagesUpsert(params: {
     const key = msg.key;
     if (!key?.remoteJid) continue;
     if (key.fromMe) continue; // inbound only for now
+    // No procesar Status (historias); el bot no debe responder ahí
+    if (key.remoteJid === 'status@broadcast') continue;
 
     console.log('[paso-1] Mensaje recibido', { messageId: key.id, remoteJid: key.remoteJid, deviceId: params.deviceId });
     const messageReceivedAt = Date.now();
@@ -106,9 +108,9 @@ export async function handleMessagesUpsert(params: {
       console.log('[paso-2] Mensaje válido (no stub)', { messageId: key.id, remoteJid: key.remoteJid, contentType: normalized.content.type });
     }
     if (normalized.content.type === 'stub') {
-      console.log('[paso-2] STUB_SKIP (mensaje no descifrado/stub)', { messageId: key.id, remoteJid: key.remoteJid, contentType: normalized.content.type });
       const stubText = normalized.content.text ?? '';
       const isNoMatchingSessions = /no matching sessions found for message/i.test(stubText);
+
       if (isNoMatchingSessions && key.remoteJid) {
         const keyAny = key as { senderPn?: string };
         result = {
@@ -122,7 +124,46 @@ export async function handleMessagesUpsert(params: {
           tenantId: device.tenantId,
           metadata: { remoteJid: key.remoteJid, senderPn: keyAny.senderPn }
         }).catch(() => {});
+
+        // Notificar al bot para que pueda responder "no pude leer, reenvía" (evita chat en silencio)
+        const decryptionFailedPayload = {
+          ...normalized,
+          decryptionFailed: true,
+          from: normalized.from || key.remoteJid
+        };
+        const rawJsonStub = JSON.parse(JSON.stringify(msg, BufferJSON.replacer));
+        const eventStub = await prisma.event.create({
+          data: {
+            tenantId: device.tenantId,
+            deviceId: device.id,
+            type: 'message.inbound',
+            normalizedJson: decryptionFailedPayload as any,
+            rawJson: rawJsonStub as any
+          }
+        });
+        for (const endpoint of endpoints) {
+          const delivery = await prisma.webhookDelivery.create({
+            data: { endpointId: endpoint.id, eventId: eventStub.id }
+          });
+          await webhookQueue.add(
+            'deliver',
+            { deliveryId: delivery.id },
+            { attempts: 5, backoff: { type: 'exponential', delay: 1000 }, removeOnComplete: true }
+          );
+        }
+        console.log('[paso-2] STUB decryption failed - webhook enviado para respuesta de fallback', {
+          messageId: key.id,
+          remoteJid: key.remoteJid,
+          eventId: eventStub.id
+        });
+      } else {
+        console.log('[paso-2] STUB_SKIP (mensaje no descifrado/stub)', {
+          messageId: key.id,
+          remoteJid: key.remoteJid,
+          contentType: normalized.content.type
+        });
       }
+
       await prisma.device.update({
         where: { id: device.id },
         data: { lastSeenAt: new Date() }

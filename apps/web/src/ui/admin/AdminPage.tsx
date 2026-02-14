@@ -3,6 +3,7 @@ import { API_URL } from '../../api/client';
 import { useTenantId } from '../../hooks';
 import { useAuth } from '../../state/auth';
 import { ClientesAdmin } from './ClientesAdmin';
+import { ConversationsTrace } from './ConversationsTrace';
 import { DevicesAdmin } from './DevicesAdmin';
 import { TenantSelector } from './TenantSelector';
 import { WebhooksAdmin } from './WebhooksAdmin';
@@ -10,7 +11,7 @@ import { WebhooksAdmin } from './WebhooksAdmin';
 export function AdminPage() {
   const { token, user } = useAuth();
   const { tenantIdOverride, setTenantIdOverride } = useTenantId();
-  const [active, setActive] = useState<'clientes' | 'devices' | 'webhooks'>('clientes');
+  const [active, setActive] = useState<'clientes' | 'devices' | 'webhooks' | 'conversations'>('clientes');
   const [pingStatus, setPingStatus] = useState<string | null>(null);
   const [pingLoading, setPingLoading] = useState(false);
 
@@ -44,6 +45,7 @@ export function AdminPage() {
         <div className="actions">
           <button onClick={() => setActive('clientes')}>Clientes</button>
           <button onClick={() => setActive('devices')}>Dispositivos</button>
+          <button onClick={() => setActive('conversations')}>Conversaciones</button>
           <button onClick={() => setActive('webhooks')}>Webhooks</button>
         </div>
         <p className="muted">Selecciona un cliente para gestionar sus dispositivos y webhooks.</p>
@@ -69,6 +71,8 @@ export function AdminPage() {
         />
       ) : active === 'devices' ? (
         <DevicesAdmin token={token!} tenantIdOverride={tenantIdOverride} />
+      ) : active === 'conversations' ? (
+        <ConversationsTrace token={token!} tenantIdOverride={tenantIdOverride} />
       ) : (
         <WebhooksAdmin token={token!} tenantIdOverride={tenantIdOverride} />
       )}

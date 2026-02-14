@@ -42,6 +42,12 @@ export type NormalizedInboundMessage = {
   kind: 'inbound_message';
   messageId: string;
   from: string;
+  /** JID completo al que el bot debe responder. Usar este para enviar y como clave de hilo estable (mismo contacto = mismo replyToJid cuando hay senderPn). */
+  replyToJid: string;
+  /** JID remoto del mensaje (p. ej. número@s.whatsapp.net o xxx@lid). */
+  remoteJid: string;
+  /** Número de teléfono en JID cuando WhatsApp lo envía; usar como clave estable para el mismo contacto. */
+  senderPn: string | null;
   to: string | null;
   timestamp: number | null;
   content: {
@@ -63,8 +69,10 @@ export function normalizeInboundMessage(params: {
   const chatId = key ? getChatId(key) : '';
   const keyAny = key as { senderPn?: string } | undefined;
   const isOneToOne = chatId && !isJidGroup(chatId) && !isJidBroadcast(chatId);
-  const replyToJid = isOneToOne && keyAny?.senderPn ? keyAny.senderPn : chatId;
+  const replyToJid = (isOneToOne && keyAny?.senderPn ? keyAny.senderPn : chatId) || key?.remoteJid || '';
   const from = (jidNormalizedUser(replyToJid || '') || replyToJid || key?.remoteJid) ?? '';
+  const remoteJid = key?.remoteJid ?? '';
+  const senderPn = keyAny?.senderPn ?? null;
 
   const to = params.deviceJid;
   const timestamp = typeof m.messageTimestamp === 'number' ? m.messageTimestamp : (m.messageTimestamp as any)?.toNumber?.() ?? null;
@@ -86,6 +94,9 @@ export function normalizeInboundMessage(params: {
     kind: 'inbound_message',
     messageId,
     from,
+    replyToJid,
+    remoteJid,
+    senderPn,
     to,
     timestamp,
     content: { type, text: text || null, media }

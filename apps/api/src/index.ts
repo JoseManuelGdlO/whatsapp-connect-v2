@@ -580,6 +580,146 @@ app.get(
   })
 );
 
+const STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+app.get(
+  '/devices/:id/conversations',
+  authRequired,
+  requireRole(UserRole.SUPERADMIN),
+  asyncHandler(async (req, res) => {
+    const auth = (req as any).auth as JwtPayload;
+    const scope = getTenantScope(auth);
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'not_found' });
+    if (!scope.isSuperadmin && device.tenantId !== scope.tenantId) return res.status(403).json({ error: 'forbidden' });
+
+    const events = await prisma.event.findMany({
+      where: { deviceId: device.id, type: 'message.inbound' },
+      orderBy: { createdAt: 'desc' },
+      take: 500
+    });
+
+    const byJid = new Map<
+      string,
+      { lastInboundAt: Date; messageCount: number }
+    >();
+    for (const ev of events) {
+      const raw = ev.rawJson as { key?: { remoteJid?: string } } | null;
+      const norm = ev.normalizedJson as { from?: string } | null;
+      const remoteJid = raw?.key?.remoteJid ?? norm?.from ?? '';
+      if (!remoteJid) continue;
+      const existing = byJid.get(remoteJid);
+      if (!existing) {
+        byJid.set(remoteJid, {
+          lastInboundAt: ev.createdAt,
+          messageCount: 1
+        });
+      } else {
+        existing.messageCount += 1;
+      }
+    }
+
+    const outboundByTo = await prisma.outboundMessage.findMany({
+      where: { deviceId: device.id },
+      orderBy: { createdAt: 'desc' },
+      take: 1000,
+      select: { to: true, createdAt: true }
+    });
+    const lastOutboundByJid = new Map<string, Date>();
+    for (const row of outboundByTo) {
+      if (!lastOutboundByJid.has(row.to)) lastOutboundByJid.set(row.to, row.createdAt);
+    }
+
+    const now = Date.now();
+    const conversations = Array.from(byJid.entries()).map(([remoteJid, data]) => {
+      const lastOutbound = lastOutboundByJid.get(remoteJid);
+      const lastInboundTime = data.lastInboundAt.getTime();
+      const lastOutboundTime = lastOutbound ? lastOutbound.getTime() : 0;
+      const lastActivityAt = new Date(Math.max(lastInboundTime, lastOutboundTime));
+      const lastIsInbound = lastInboundTime >= lastOutboundTime;
+      const stuck =
+        lastIsInbound && now - lastInboundTime > STUCK_THRESHOLD_MS ? true : undefined;
+      return {
+        remoteJid,
+        lastMessageAt: lastActivityAt.toISOString(),
+        messageCount: data.messageCount,
+        stuck
+      };
+    });
+    conversations.sort(
+      (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+    );
+    res.json({ conversations });
+  })
+);
+
+app.get(
+  '/devices/:id/conversations/messages',
+  authRequired,
+  requireRole(UserRole.SUPERADMIN),
+  asyncHandler(async (req, res) => {
+    const auth = (req as any).auth as JwtPayload;
+    const scope = getTenantScope(auth);
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'not_found' });
+    if (!scope.isSuperadmin && device.tenantId !== scope.tenantId) return res.status(403).json({ error: 'forbidden' });
+
+    const remoteJid = (req.query.remoteJid as string) ?? '';
+    if (!remoteJid) return res.status(400).json({ error: 'remoteJid_required' });
+
+    const events = await prisma.event.findMany({
+      where: { deviceId: device.id, type: 'message.inbound' },
+      orderBy: { createdAt: 'asc' },
+      take: 500
+    });
+
+    const inboundRows: { id: string; type: 'inbound'; text: string; timestamp: string; fromMe: false; status?: undefined }[] = [];
+    for (const ev of events) {
+      const raw = ev.rawJson as { key?: { remoteJid?: string }; message?: { conversation?: string; extendedTextMessage?: { text?: string }; imageMessage?: { caption?: string }; videoMessage?: { caption?: string } } } | null;
+      const norm = ev.normalizedJson as { content?: { text?: string | null }; from?: string } | null;
+      const jid = raw?.key?.remoteJid ?? norm?.from ?? '';
+      if (jid !== remoteJid) continue;
+      const text =
+        norm?.content?.text ??
+        raw?.message?.conversation ??
+        raw?.message?.extendedTextMessage?.text ??
+        raw?.message?.imageMessage?.caption ??
+        raw?.message?.videoMessage?.caption ??
+        '';
+      inboundRows.push({
+        id: ev.id,
+        type: 'inbound',
+        text: String(text),
+        timestamp: ev.createdAt.toISOString(),
+        fromMe: false
+      });
+    }
+
+    const outboundRows = await prisma.outboundMessage.findMany({
+      where: { deviceId: device.id, to: remoteJid },
+      orderBy: { createdAt: 'asc' },
+      take: 500
+    });
+
+    const outboundMessages: { id: string; type: 'outbound'; text: string; timestamp: string; fromMe: true; status?: string }[] = outboundRows.map((row) => {
+      const payload = (row.payloadJson as { text?: string }) ?? {};
+      return {
+        id: row.id,
+        type: 'outbound' as const,
+        text: payload.text ?? '',
+        timestamp: row.createdAt.toISOString(),
+        fromMe: true as const,
+        status: row.status
+      };
+    });
+
+    const merged = [...inboundRows, ...outboundMessages].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    res.json({ messages: merged });
+  })
+);
+
 function toJid(to: string): string {
   const cleaned = to.replace(/[^\d]/g, '');
   // If caller already provides jid, keep it
