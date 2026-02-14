@@ -1,0 +1,1 @@
+export { useTenantId } from './useTenantId';
