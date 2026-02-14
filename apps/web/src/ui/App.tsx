@@ -145,10 +145,27 @@ function TenantsAdmin({
   const [name, setName] = useState('');
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [deviceActionLoading, setDeviceActionLoading] = useState<string | null>(null);
+
+  const selectedTenant = tenants.find((t) => t.id === tenantIdOverride);
 
   useEffect(() => {
     apiJson<Tenant[]>('/tenants', token).then(setTenants).catch((e) => setMsg(e?.message ?? 'error'));
   }, [token]);
+
+  useEffect(() => {
+    if (!tenantIdOverride) {
+      setDevices([]);
+      return;
+    }
+    setDevicesLoading(true);
+    apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantIdOverride)}`, token)
+      .then((data) => setDevices(data.map((d) => ({ ...d, label: d.label || d.id || 'Device sin nombre' }))))
+      .catch(() => setDevices([]))
+      .finally(() => setDevicesLoading(false));
+  }, [token, tenantIdOverride]);
 
   const handleDelete = async (tenantId: string, tenantName: string) => {
     if (!confirm(`¿Estás seguro de eliminar el tenant "${tenantName}"?\n\nEsto eliminará TODOS los dispositivos, usuarios, webhooks y eventos asociados. Esta acción no se puede deshacer.`)) {
@@ -161,9 +178,38 @@ function TenantsAdmin({
         setTenantIdOverride('');
         localStorage.removeItem('tenantId');
       }
+      setDevices([]);
       setMsg(`Tenant "${tenantName}" eliminado`);
     } catch (err: any) {
       setMsg(`Error: ${err?.message ?? 'No se pudo eliminar el tenant'}`);
+    }
+  };
+
+  const handleReconnect = async (device: Device) => {
+    setDeviceActionLoading(device.id);
+    try {
+      await apiJson(`/devices/${device.id}/connect`, token, { method: 'POST' });
+      const d = await apiJson<Device>(`/devices/${device.id}/status`, token);
+      setDevices((prev) => prev.map((x) => (x.id === d.id ? { ...d, label: d.label || x.label } : x)));
+      setMsg(`Conectando "${device.label}" — escanea el QR en la pestaña Devices si hace falta.`);
+    } catch (err: any) {
+      setMsg(`Error al reconectar: ${err?.message ?? 'Error desconocido'}`);
+    } finally {
+      setDeviceActionLoading(null);
+    }
+  };
+
+  const handleLogout = async (device: Device) => {
+    setDeviceActionLoading(device.id);
+    try {
+      await apiJson(`/devices/${device.id}/disconnect`, token, { method: 'POST' });
+      const d = await apiJson<Device>(`/devices/${device.id}/status`, token);
+      setDevices((prev) => prev.map((x) => (x.id === d.id ? { ...d, label: d.label || x.label } : x)));
+      setMsg(`Sesión cerrada en "${device.label}".`);
+    } catch (err: any) {
+      setMsg(`Error al cerrar sesión: ${err?.message ?? 'Error desconocido'}`);
+    } finally {
+      setDeviceActionLoading(null);
     }
   };
 
@@ -194,14 +240,17 @@ function TenantsAdmin({
       </div>
       <div className="card">
         <h3>Tenants</h3>
+        <p className="muted">Haz clic en un tenant para ver sus dispositivos y reconectar o cerrar sesión.</p>
         <div className="list">
           {tenants.map((t) => (
             <div key={t.id} className={`row ${tenantIdOverride === t.id ? 'active' : ''}`} style={{ cursor: 'default' }}>
               <button
+                type="button"
                 style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
                 onClick={() => {
                   setTenantIdOverride(t.id);
-                  setMsg(`Tenant seleccionado: ${t.id}`);
+                  localStorage.setItem('tenantId', t.id);
+                  setMsg(null);
                 }}
               >
                 <div>
@@ -211,7 +260,11 @@ function TenantsAdmin({
                 <div className="rowRight">{t.status}</div>
               </button>
               <button
-                onClick={() => handleDelete(t.id, t.name)}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDelete(t.id, t.name);
+                }}
                 style={{ marginLeft: '8px', padding: '4px 8px', fontSize: '12px' }}
               >
                 Eliminar
@@ -220,6 +273,50 @@ function TenantsAdmin({
           ))}
         </div>
       </div>
+      {tenantIdOverride && selectedTenant ? (
+        <div className="card">
+          <h3>Dispositivos de {selectedTenant.name}</h3>
+          {devicesLoading ? (
+            <p className="muted">Cargando dispositivos...</p>
+          ) : devices.length === 0 ? (
+            <p className="muted">Este tenant no tiene dispositivos.</p>
+          ) : (
+            <div className="list">
+              {devices.map((d) => (
+                <div key={d.id} className="row" style={{ cursor: 'default', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ flex: 1, minWidth: 120 }}>
+                    <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px' }}>
+                      {d.label || d.id || 'Device sin nombre'}
+                    </div>
+                    <div className="rowMeta" style={{ fontSize: '12px', color: '#64748b' }}>
+                      {d.status}
+                      {d.lastError ? ` · ${d.lastError}` : ''}
+                    </div>
+                  </div>
+                  <div className="actions" style={{ margin: 0 }}>
+                    <button
+                      type="button"
+                      disabled={deviceActionLoading === d.id}
+                      onClick={() => handleReconnect(d)}
+                      style={{ padding: '4px 8px', fontSize: '12px' }}
+                    >
+                      {deviceActionLoading === d.id ? '...' : 'Reconectar'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deviceActionLoading === d.id}
+                      onClick={() => handleLogout(d)}
+                      style={{ padding: '4px 8px', fontSize: '12px' }}
+                    >
+                      Cerrar sesión
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
     </>
   );
 }
