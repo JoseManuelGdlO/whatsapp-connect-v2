@@ -274,24 +274,10 @@ app.delete(
 app.get(
   '/users',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-    const auth = (req as any).auth as JwtPayload;
     const tenantId = req.query.tenantId as string | undefined;
-    
-    let where: any = {};
-    if (auth.role === UserRole.SUPERADMIN) {
-      // SUPERADMIN can see all users or filter by tenantId
-      if (tenantId) {
-        where.tenantId = tenantId;
-      }
-    } else if (auth.role === UserRole.TENANT_ADMIN) {
-      // TENANT_ADMIN can only see users from their tenant
-      if (!auth.tenantId) return res.status(400).json({ error: 'tenant_required' });
-      where.tenantId = auth.tenantId;
-    } else {
-      return res.status(403).json({ error: 'forbidden' });
-    }
-
+    const where: any = tenantId ? { tenantId } : {};
     const users = await prisma.user.findMany({
       where,
       select: { id: true, email: true, role: true, tenantId: true, createdAt: true },
@@ -305,8 +291,8 @@ app.get(
 app.post(
   '/users',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
   const Body = z.object({
     email: z.string().email(),
     password: z.string().min(8),
@@ -314,17 +300,6 @@ app.post(
     tenantId: z.string().nullable()
   });
   const body = Body.parse(req.body);
-
-  // SUPERADMIN can create any user; TENANT_ADMIN can create within their tenant (non-superadmin)
-  if (auth.role === UserRole.SUPERADMIN) {
-    // ok
-  } else if (auth.role === UserRole.TENANT_ADMIN) {
-    if (!auth.tenantId) return res.status(400).json({ error: 'tenant_required' });
-    if (body.role === UserRole.SUPERADMIN) return res.status(403).json({ error: 'forbidden' });
-    if (body.tenantId !== auth.tenantId) return res.status(403).json({ error: 'forbidden' });
-  } else {
-    return res.status(403).json({ error: 'forbidden' });
-  }
 
   const passwordHash = await bcrypt.hash(body.password, 10);
   const user = await prisma.user.create({
@@ -343,29 +318,13 @@ app.post(
 app.delete(
   '/users/:id',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
     const auth = (req as any).auth as JwtPayload;
     const userId = req.params.id;
-    
-    // Cannot delete yourself
-    if (auth.sub === userId) {
-      return res.status(400).json({ error: 'cannot_delete_self' });
-    }
-
+    if (auth.sub === userId) return res.status(400).json({ error: 'cannot_delete_self' });
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return res.status(404).json({ error: 'not_found' });
-
-    // SUPERADMIN can delete any user; TENANT_ADMIN can only delete users from their tenant
-    if (auth.role === UserRole.SUPERADMIN) {
-      // ok
-    } else if (auth.role === UserRole.TENANT_ADMIN) {
-      if (!auth.tenantId) return res.status(400).json({ error: 'tenant_required' });
-      if (user.tenantId !== auth.tenantId) return res.status(403).json({ error: 'forbidden' });
-      if (user.role === UserRole.SUPERADMIN) return res.status(403).json({ error: 'forbidden' });
-    } else {
-      return res.status(403).json({ error: 'forbidden' });
-    }
-
     await prisma.user.delete({ where: { id: userId } });
     res.json({ ok: true });
   })
@@ -374,6 +333,7 @@ app.delete(
 app.post(
   '/devices',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -399,6 +359,7 @@ app.post(
 app.get(
   '/devices',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -415,6 +376,7 @@ app.get(
 app.get(
   '/devices/:id/status',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -428,6 +390,7 @@ app.get(
 app.post(
   '/devices/:id/reset-session',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
     const auth = (req as any).auth as JwtPayload;
     const scope = getTenantScope(auth);
@@ -448,6 +411,7 @@ app.post(
 app.get(
   '/devices/:id/stream',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -490,6 +454,7 @@ app.get(
 app.post(
   '/devices/:id/connect',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -505,6 +470,7 @@ app.post(
 app.post(
   '/devices/:id/disconnect',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -520,6 +486,7 @@ app.post(
 app.post(
   '/devices/:id/public-link',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
     const auth = (req as any).auth as JwtPayload;
     const scope = getTenantScope(auth);
@@ -555,6 +522,7 @@ app.post(
 app.delete(
   '/devices/:id',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
     const auth = (req as any).auth as JwtPayload;
     const scope = getTenantScope(auth);
@@ -578,6 +546,7 @@ app.delete(
 app.get(
   '/events',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -613,6 +582,7 @@ app.post(
   asyncHandler(async (req, res) => {
   const bot = (req as any).bot as BotAuth | undefined;
   const auth = (req as any).auth as JwtPayload | undefined;
+  if (!bot && auth && auth.role !== UserRole.SUPERADMIN) return res.status(403).json({ error: 'forbidden' });
   const scope = bot ? { tenantId: bot.tenantId, isSuperadmin: false } : getTenantScope(auth as JwtPayload);
 
   const Body = z.object({
@@ -655,6 +625,7 @@ app.post(
   asyncHandler(async (req, res) => {
   const bot = (req as any).bot as BotAuth | undefined;
   const auth = (req as any).auth as JwtPayload | undefined;
+  if (!bot && auth && auth.role !== UserRole.SUPERADMIN) return res.status(403).json({ error: 'forbidden' });
   const scope = bot ? { tenantId: bot.tenantId, isSuperadmin: false } : getTenantScope(auth as JwtPayload);
 
   const Body = z.object({
@@ -692,6 +663,7 @@ app.post(
 app.get(
   '/devices/:id/messages/outbound',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -711,6 +683,7 @@ app.get(
 app.get(
   '/webhooks',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -728,6 +701,7 @@ app.get(
 app.post(
   '/webhooks',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -761,6 +735,7 @@ app.post(
 app.patch(
   '/webhooks/:id',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -787,6 +762,7 @@ app.patch(
 app.delete(
   '/webhooks/:id',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);
@@ -801,6 +777,7 @@ app.delete(
 app.post(
   '/webhooks/:id/test',
   authRequired,
+  requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as JwtPayload;
   const scope = getTenantScope(auth);

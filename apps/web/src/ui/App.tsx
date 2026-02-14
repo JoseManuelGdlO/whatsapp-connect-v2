@@ -100,7 +100,7 @@ function TenantSelector() {
 function AdminPage() {
   const { token, user } = useAuth();
   const { tenantIdOverride, setTenantIdOverride } = useTenantId();
-  const [active, setActive] = useState<'tenants' | 'users' | 'devices'>('tenants');
+  const [active, setActive] = useState<'clientes' | 'devices' | 'webhooks'>('clientes');
 
   if (user?.role !== 'SUPERADMIN') return <div className="card">Forbidden</div>;
 
@@ -109,14 +109,14 @@ function AdminPage() {
       <div className="card">
         <h2>Admin</h2>
         <div className="actions">
-          <button onClick={() => setActive('tenants')}>Tenants</button>
-          <button onClick={() => setActive('users')}>Users</button>
-          <button onClick={() => setActive('devices')}>Devices</button>
+          <button onClick={() => setActive('clientes')}>Clientes</button>
+          <button onClick={() => setActive('devices')}>Dispositivos</button>
+          <button onClick={() => setActive('webhooks')}>Webhooks</button>
         </div>
-        <p className="muted">Tip: al crear/seleccionar un tenant, guardamos su TenantId para usarlo en Devices/Webhooks.</p>
+        <p className="muted">Selecciona un cliente para gestionar sus dispositivos y webhooks.</p>
       </div>
-      {active === 'tenants' ? (
-        <TenantsAdmin
+      {active === 'clientes' ? (
+        <ClientesAdmin
           token={token!}
           tenantIdOverride={tenantIdOverride}
           setTenantIdOverride={(v) => {
@@ -124,16 +124,16 @@ function AdminPage() {
             localStorage.setItem('tenantId', v);
           }}
         />
-      ) : active === 'users' ? (
-        <UsersAdmin token={token!} />
-      ) : (
+      ) : active === 'devices' ? (
         <DevicesAdmin token={token!} tenantIdOverride={tenantIdOverride} />
+      ) : (
+        <WebhooksAdmin token={token!} tenantIdOverride={tenantIdOverride} />
       )}
     </div>
   );
 }
 
-function TenantsAdmin({
+function ClientesAdmin({
   token,
   tenantIdOverride,
   setTenantIdOverride
@@ -168,7 +168,7 @@ function TenantsAdmin({
   }, [token, tenantIdOverride]);
 
   const handleDelete = async (tenantId: string, tenantName: string) => {
-    if (!confirm(`¿Estás seguro de eliminar el tenant "${tenantName}"?\n\nEsto eliminará TODOS los dispositivos, usuarios, webhooks y eventos asociados. Esta acción no se puede deshacer.`)) {
+    if (!confirm(`¿Estás seguro de eliminar el cliente "${tenantName}"?\n\nEsto eliminará TODOS los dispositivos, webhooks y eventos asociados. Esta acción no se puede deshacer.`)) {
       return;
     }
     try {
@@ -179,9 +179,9 @@ function TenantsAdmin({
         localStorage.removeItem('tenantId');
       }
       setDevices([]);
-      setMsg(`Tenant "${tenantName}" eliminado`);
+      setMsg(`Cliente "${tenantName}" eliminado`);
     } catch (err: any) {
-      setMsg(`Error: ${err?.message ?? 'No se pudo eliminar el tenant'}`);
+      setMsg(`Error: ${err?.message ?? 'No se pudo eliminar el cliente'}`);
     }
   };
 
@@ -216,9 +216,9 @@ function TenantsAdmin({
   return (
     <>
       <div className="card">
-        <h3>Crear tenant</h3>
+        <h3>Crear cliente</h3>
         <div className="actions">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del tenant" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del cliente" />
           <button
             onClick={async () => {
               setMsg(null);
@@ -226,21 +226,21 @@ function TenantsAdmin({
               setTenants((prev) => [t, ...prev]);
               setTenantIdOverride(t.id);
               setName('');
-              setMsg(`Tenant creado: ${t.id}`);
+              setMsg(`Cliente creado: ${t.id}`);
             }}
           >
             Crear
           </button>
         </div>
         <label>
-          TenantId actual (para usar en Devices/Webhooks)
-          <input value={tenantIdOverride} onChange={(e) => setTenantIdOverride(e.target.value)} placeholder="tenantId..." />
+          Cliente seleccionado (ID) — para Dispositivos y Webhooks
+          <input value={tenantIdOverride} onChange={(e) => setTenantIdOverride(e.target.value)} placeholder="ID del cliente..." />
         </label>
         {msg ? <div className="muted">{msg}</div> : null}
       </div>
       <div className="card">
-        <h3>Tenants</h3>
-        <p className="muted">Haz clic en un tenant para ver sus dispositivos y reconectar o cerrar sesión.</p>
+        <h3>Clientes</h3>
+        <p className="muted">Haz clic en un cliente para ver sus dispositivos y reconectar o cerrar sesión.</p>
         <div className="list">
           {tenants.map((t) => (
             <div key={t.id} className={`row ${tenantIdOverride === t.id ? 'active' : ''}`} style={{ cursor: 'default' }}>
@@ -279,7 +279,7 @@ function TenantsAdmin({
           {devicesLoading ? (
             <p className="muted">Cargando dispositivos...</p>
           ) : devices.length === 0 ? (
-            <p className="muted">Este tenant no tiene dispositivos.</p>
+            <p className="muted">Este cliente no tiene dispositivos.</p>
           ) : (
             <div className="list">
               {devices.map((d) => (
@@ -321,130 +321,83 @@ function TenantsAdmin({
   );
 }
 
-type User = {
-  id: string;
-  email: string;
-  role: string;
-  tenantId: string | null;
-  createdAt: string;
-};
-
-function UsersAdmin({ token }: { token: string }) {
-  const { user: currentUser } = useAuth();
-  const { tenantIdOverride } = useTenantId();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('12345678');
-  const [role, setRole] = useState<'TENANT_ADMIN' | 'AGENT'>('TENANT_ADMIN');
-  const [tenantId, setTenantId] = useState(() => tenantIdOverride);
+function WebhooksAdmin({ token, tenantIdOverride }: { token: string; tenantIdOverride: string }) {
+  const [rows, setRows] = useState<WebhookEndpoint[]>([]);
+  const [url, setUrl] = useState('');
+  const [secret, setSecret] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
-  const [users, setUsers] = useState<User[]>([]);
-  const [filterTenantId, setFilterTenantId] = useState<string>('');
 
   useEffect(() => {
-    setTenantId(tenantIdOverride);
-  }, [tenantIdOverride]);
-
-  useEffect(() => {
-    const loadUsers = async () => {
-      try {
-        const query = filterTenantId ? `?tenantId=${encodeURIComponent(filterTenantId)}` : '';
-        const data = await apiJson<User[]>(`/users${query}`, token);
-        setUsers(data);
-      } catch (err: any) {
-        setMsg(`Error al cargar usuarios: ${err?.message ?? 'error'}`);
-      }
-    };
-    loadUsers();
-  }, [token, filterTenantId]);
-
-  const handleDelete = async (userId: string, userEmail: string) => {
-    if (!confirm(`¿Estás seguro de eliminar el usuario "${userEmail}"?`)) {
+    if (!token || !tenantIdOverride) {
+      setRows([]);
       return;
     }
-    try {
-      await apiJson(`/users/${userId}`, token, { method: 'DELETE' });
-      setUsers((prev) => prev.filter((u) => u.id !== userId));
-      setMsg(`Usuario "${userEmail}" eliminado`);
-    } catch (err: any) {
-      setMsg(`Error: ${err?.message ?? 'No se pudo eliminar el usuario'}`);
-    }
-  };
+    apiJson<WebhookEndpoint[]>(`/webhooks?tenantId=${encodeURIComponent(tenantIdOverride)}`, token).then(setRows).catch(() => setRows([]));
+  }, [token, tenantIdOverride]);
 
   return (
     <>
       <div className="card">
-        <h3>Crear usuario</h3>
-        <p className="muted">Esto llama `POST /users`. Para SUPERADMIN puedes crear usuarios en cualquier tenant.</p>
-        <div className="form">
-          <label>
-            TenantId
-            <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} placeholder="tenantId..." />
-          </label>
-          <label>
-            Email
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user@cliente.com" />
-          </label>
-          <label>
-            Password (min 8)
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          </label>
-          <label>
-            Role
-            <select value={role} onChange={(e) => setRole(e.target.value as any)}>
-              <option value="TENANT_ADMIN">TENANT_ADMIN</option>
-              <option value="AGENT">AGENT</option>
-            </select>
-          </label>
-          <button
-            onClick={async () => {
-              setMsg(null);
-              const created = await apiJson<any>('/users', token, {
-                method: 'POST',
-                body: JSON.stringify({ email, password, role, tenantId: tenantId || null })
-              });
-              setMsg(`Usuario creado: ${created.email} (role=${created.role})`);
-              setEmail('');
-              // Reload users list
-              const query = filterTenantId ? `?tenantId=${encodeURIComponent(filterTenantId)}` : '';
-              const data = await apiJson<User[]>(`/users${query}`, token);
-              setUsers(data);
-            }}
-          >
-            Crear usuario
-          </button>
-          {msg ? <div className="muted">{msg}</div> : null}
-        </div>
+        <h3>Webhooks del cliente</h3>
+        <p className="muted">Selecciona un cliente en la pestaña Clientes para gestionar sus webhooks.</p>
+        {tenantIdOverride ? (
+          <div className="form" style={{ marginTop: 12 }}>
+            <label>
+              URL
+              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://..." />
+            </label>
+            <label>
+              Secret (opcional)
+              <input value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="auto" />
+            </label>
+            <button
+              onClick={async () => {
+                if (!tenantIdOverride) return;
+                const body: any = { url, tenantId: tenantIdOverride };
+                if (secret) body.secret = secret;
+                const created = await apiJson<WebhookEndpoint>('/webhooks', token, { method: 'POST', body: JSON.stringify(body) });
+                setRows((prev) => [created, ...prev]);
+                setUrl('');
+                setSecret('');
+              }}
+            >
+              Crear Webhook
+            </button>
+            {msg ? <div className="muted">{msg}</div> : null}
+          </div>
+        ) : (
+          <p className="muted">Selecciona un cliente en la pestaña Clientes.</p>
+        )}
       </div>
       <div className="card">
-        <h3>Usuarios</h3>
-        <label>
-          Filtrar por TenantId (dejar vacío para ver todos)
-          <input
-            value={filterTenantId}
-            onChange={(e) => setFilterTenantId(e.target.value)}
-            placeholder="tenantId..."
-          />
-        </label>
-        <div className="list" style={{ marginTop: '12px' }}>
-          {users.map((u) => (
-            <div key={u.id} className="row" style={{ cursor: 'default' }}>
+        <h3>Endpoints</h3>
+        <div className="list">
+          {rows.map((w) => (
+            <div key={w.id} className="row" style={{ cursor: 'default' }}>
               <div>
-                <div className="rowTitle">{u.email}</div>
-                <div className="rowMeta">
-                  {u.role} {u.tenantId ? `· ${u.tenantId}` : '· Sin tenant'}
-                </div>
+                <div className="rowTitle">{w.url}</div>
+                <div className="rowMeta">{w.enabled ? 'enabled' : 'disabled'}</div>
               </div>
               <div className="actions">
-                {u.id !== currentUser?.id ? (
-                  <button
-                    onClick={() => handleDelete(u.id, u.email)}
-                    style={{ padding: '4px 8px', fontSize: '12px' }}
-                  >
-                    Eliminar
-                  </button>
-                ) : (
-                  <span className="muted" style={{ fontSize: '12px' }}>Tú</span>
-                )}
+                <button
+                  onClick={async () => {
+                    const r = await apiJson<{ ok: boolean; status: number }>(`/webhooks/${w.id}/test`, token, {
+                      method: 'POST',
+                      body: JSON.stringify({})
+                    });
+                    setMsg(`test: status=${r.status} ok=${r.ok}`);
+                  }}
+                >
+                  Test
+                </button>
+                <button
+                  onClick={async () => {
+                    await apiJson(`/webhooks/${w.id}`, token, { method: 'DELETE' });
+                    setRows((prev) => prev.filter((x) => x.id !== w.id));
+                  }}
+                >
+                  Eliminar
+                </button>
               </div>
             </div>
           ))}
@@ -584,11 +537,11 @@ function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenantIdOver
       <div className="card">
         <h3>Gestionar Dispositivos</h3>
         <label>
-          Filtrar por TenantId
+          Cliente (ID) — selecciona en Clientes o pega el ID
           <input
             value={filterTenantId}
             onChange={(e) => setFilterTenantId(e.target.value)}
-            placeholder="tenantId..."
+            placeholder="ID del cliente..."
           />
         </label>
         {filterTenantId ? (
@@ -1130,9 +1083,7 @@ export function App() {
         <nav className="nav">
           <Link to="/">Home</Link>
           <Link to="/login">Login</Link>
-          {token ? <Link to="/devices">Devices</Link> : null}
-          {token ? <Link to="/webhooks">Webhooks</Link> : null}
-          {token && user?.role === 'SUPERADMIN' ? <Link to="/admin">Admin</Link> : null}
+          {token ? <Link to="/admin">Admin</Link> : null}
           {token ? (
             <button className="linkBtn" onClick={() => clear()}>
               Logout
@@ -1150,7 +1101,7 @@ export function App() {
                 {token ? (
                   <div>
                     <p className="muted">Logueado como {user?.email}</p>
-                    <Link to="/devices">Ir a Devices</Link>
+                    <Link to="/admin">Ir a Admin</Link>
                   </div>
                 ) : (
                   <p>Inicia sesión para comenzar.</p>
@@ -1167,14 +1118,14 @@ export function App() {
                   onLogin={async (email, password) => {
                     const r = await login(email, password);
                     setAuth(r.token, r.user);
-                    navigate('/devices');
+                    navigate('/admin');
                   }}
                 />
               </div>
             }
           />
-          <Route path="/devices" element={token ? <DevicesPage /> : <Navigate to="/login" replace />} />
-          <Route path="/webhooks" element={token ? <WebhooksPage /> : <Navigate to="/login" replace />} />
+          <Route path="/devices" element={token ? <Navigate to="/admin" replace /> : <Navigate to="/login" replace />} />
+          <Route path="/webhooks" element={token ? <Navigate to="/admin" replace /> : <Navigate to="/login" replace />} />
           <Route path="/admin" element={token ? <AdminPage /> : <Navigate to="/login" replace />} />
           <Route path="/public/qr/:token" element={<PublicQrPage />} />
         </Routes>
