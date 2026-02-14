@@ -61,6 +61,50 @@ export async function handleMessagesUpsert(params: {
       deviceJid: params.sock.user?.id ?? null
     });
 
+    // Log para inspección: mensaje entrante y lo que se extrajo (depurar texto null)
+    const rawForLog = JSON.parse(JSON.stringify(msg, BufferJSON.replacer));
+    const messageKeys = rawForLog.message ? Object.keys(rawForLog.message) : [];
+    const inspectPayload = {
+      messageId: key?.id,
+      remoteJid: key?.remoteJid,
+      normalized: {
+        contentType: normalized.content.type,
+        text: normalized.content.text,
+        hasMedia: !!normalized.content.media
+      },
+      rawTopLevelKeys: Object.keys(rawForLog),
+      rawMessageKeys: messageKeys,
+      rawMessageSample: (() => {
+        const m = rawForLog.message;
+        if (!m) return null;
+        const out: Record<string, unknown> = {};
+        for (const k of messageKeys) {
+          const v = m[k];
+          if (k === 'conversation' || k === 'extendedTextMessage') {
+            out[k] = v;
+            continue;
+          }
+          if (v && typeof v === 'object' && !Array.isArray(v)) {
+            if (k === 'extendedTextMessage' && v && typeof v === 'object') out[k] = v;
+            else out[k] = '<object>';
+          } else {
+            out[k] = typeof v === 'string' && v.length > 200 ? v.slice(0, 200) + '...' : v;
+          }
+        }
+        return out;
+      })()
+    };
+    console.log('[inbound-inspect]', JSON.stringify(inspectPayload, null, 2));
+
+    // No notificar a los bots mensajes stub (ej. "No session record") — no son mensajes de usuario
+    if (normalized.content.type === 'stub') {
+      await prisma.device.update({
+        where: { id: device.id },
+        data: { lastSeenAt: new Date() }
+      });
+      continue;
+    }
+
     // Persist raw as JSON-friendly structure
     const rawJson = JSON.parse(JSON.stringify(msg, BufferJSON.replacer));
 

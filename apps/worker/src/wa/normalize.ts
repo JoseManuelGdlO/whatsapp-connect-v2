@@ -45,7 +45,7 @@ export type NormalizedInboundMessage = {
   to: string | null;
   timestamp: number | null;
   content: {
-    type: 'text' | 'media' | 'unknown';
+    type: 'text' | 'media' | 'stub' | 'unknown';
     text: string | null;
     media: any | null;
   };
@@ -69,10 +69,18 @@ export function normalizeInboundMessage(params: {
   const to = params.deviceJid;
   const timestamp = typeof m.messageTimestamp === 'number' ? m.messageTimestamp : (m.messageTimestamp as any)?.toNumber?.() ?? null;
 
-  const text = getText(m.message ?? undefined);
+  let text = getText(m.message ?? undefined);
   const media = getMediaMeta(m.message ?? undefined);
 
-  const type: 'text' | 'media' | 'unknown' = text ? 'text' : media ? 'media' : 'unknown';
+  // Stub messages (e.g. "No session record", group join/leave) have no conversation/text
+  const msgAny = m as { messageStubType?: number; messageStubParameters?: string[] };
+  const isStub = text == null && media == null && (msgAny.messageStubType != null || (msgAny.messageStubParameters?.length ?? 0) > 0);
+  if (isStub && msgAny.messageStubParameters?.length) {
+    text = msgAny.messageStubParameters.join(' ').trim() || null;
+  }
+
+  const type: 'text' | 'media' | 'stub' | 'unknown' =
+    text && !isStub ? 'text' : media ? 'media' : isStub ? 'stub' : 'unknown';
 
   return {
     kind: 'inbound_message',
@@ -80,7 +88,7 @@ export function normalizeInboundMessage(params: {
     from,
     to,
     timestamp,
-    content: { type, text, media }
+    content: { type, text: text || null, media }
   };
 }
 
