@@ -1,4 +1,5 @@
 import type { proto } from '@whiskeysockets/baileys';
+import { getChatId, jidNormalizedUser, isJidBroadcast, isJidGroup } from '@whiskeysockets/baileys';
 
 function getText(msg: proto.IMessage | undefined): string | null {
   if (!msg) return null;
@@ -55,8 +56,16 @@ export function normalizeInboundMessage(params: {
   deviceJid: string | null;
 }): NormalizedInboundMessage {
   const m = params.message;
-  const messageId = m.key?.id ?? '';
-  const from = m.key?.remoteJid ?? '';
+  const key = m.key;
+  const messageId = key?.id ?? '';
+
+  // Reply-to JID: use getChatId so broadcast uses participant; for 1:1 prefer senderPn (phone) over LID
+  const chatId = key ? getChatId(key) : '';
+  const keyAny = key as { senderPn?: string } | undefined;
+  const isOneToOne = chatId && !isJidGroup(chatId) && !isJidBroadcast(chatId);
+  const replyToJid = isOneToOne && keyAny?.senderPn ? keyAny.senderPn : chatId;
+  const from = (jidNormalizedUser(replyToJid || '') || replyToJid || key?.remoteJid) ?? '';
+
   const to = params.deviceJid;
   const timestamp = typeof m.messageTimestamp === 'number' ? m.messageTimestamp : (m.messageTimestamp as any)?.toNumber?.() ?? null;
 
