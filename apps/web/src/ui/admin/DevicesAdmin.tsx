@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { apiJson } from '../../api/client';
-import type { Device } from '../../types';
+import type { Device, OutboundMessage } from '../../types';
 
 export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenantIdOverride: string }) {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -12,6 +12,9 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const [testTo, setTestTo] = useState('');
+  const [testText, setTestText] = useState('ping');
+  const [outbound, setOutbound] = useState<OutboundMessage[]>([]);
 
   useEffect(() => {
     const loadDevices = async () => {
@@ -33,6 +36,7 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
     if (!token || !selectedId) {
       setSelectedDevice(null);
       setQrDataUrl(null);
+      setOutbound([]);
       return;
     }
     let alive = true;
@@ -48,6 +52,8 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
         } else {
           setQrDataUrl(null);
         }
+        const out = await apiJson<OutboundMessage[]>(`/devices/${selectedId}/messages/outbound`, token);
+        if (alive) setOutbound(out);
       } catch {
         if (alive) setSelectedDevice(null);
       }
@@ -289,6 +295,64 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
               <small>Prueba &quot;Reiniciar sesión&quot; y luego &quot;Conectar&quot;.</small>
             </div>
           ) : null}
+
+          <hr style={{ margin: '16px 0', border: 0, borderTop: '1px solid #e2e8f0' }} />
+          <h3>Ping por dispositivo</h3>
+          <p className="muted">Envía un mensaje de prueba para comprobar si el dispositivo está conectado a WhatsApp.</p>
+          <div className="actions" style={{ flexWrap: 'wrap', gap: 8 }}>
+            <input
+              value={testTo}
+              onChange={(e) => setTestTo(e.target.value)}
+              placeholder="Número: 521XXXXXXXXXX"
+              style={{ minWidth: 160 }}
+            />
+            <input
+              value={testText}
+              onChange={(e) => setTestText(e.target.value)}
+              placeholder="Texto (ej. ping)"
+              style={{ minWidth: 120 }}
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                if (!selectedDevice) return;
+                setMsg(null);
+                try {
+                  await apiJson(`/devices/${selectedDevice.id}/messages/test`, token, {
+                    method: 'POST',
+                    body: JSON.stringify({ to: testTo, text: testText })
+                  });
+                  setMsg('Mensaje enviado. Revisa "Últimos envíos" para ver si llegó.');
+                } catch (err: unknown) {
+                  setMsg(`Error: ${err instanceof Error ? err.message : 'No se pudo enviar'}`);
+                }
+              }}
+            >
+              Enviar ping
+            </button>
+          </div>
+          {msg ? <div className="muted" style={{ marginTop: 8 }}>{msg}</div> : null}
+          <h4 style={{ marginTop: 16, fontSize: 14 }}>Últimos envíos</h4>
+          <div className="list" style={{ maxHeight: 200, overflow: 'auto' }}>
+            {outbound.length === 0 ? (
+              <div className="muted" style={{ padding: 8 }}>Aún no hay envíos. Envía un ping arriba.</div>
+            ) : (
+              outbound.map((o) => (
+                <div key={o.id} className="row" style={{ cursor: 'default', padding: '6px 0' }}>
+                  <div>
+                    <div className="rowTitle" style={{ fontSize: 13 }}>
+                      {o.isTest ? '[TEST] ' : ''}{o.to}
+                    </div>
+                    <div className="rowMeta" style={{ fontSize: 12 }}>
+                      {o.status}
+                      {o.error ? ` · ${o.error}` : ''}
+                    </div>
+                  </div>
+                  <div className="rowRight">{o.providerMessageId ? 'enviado' : ''}</div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       ) : selectedId ? (
         <div className="card">
