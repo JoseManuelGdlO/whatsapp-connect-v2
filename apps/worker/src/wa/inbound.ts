@@ -33,6 +33,7 @@ export async function handleMessagesUpsert(params: {
     if (!key?.remoteJid) continue;
     if (key.fromMe) continue; // inbound only for now
 
+    console.log('[paso-1] Mensaje recibido', { messageId: key.id, remoteJid: key.remoteJid, deviceId: params.deviceId });
     const messageReceivedAt = Date.now();
     const messageTimestamp = typeof msg.messageTimestamp === 'number' 
       ? msg.messageTimestamp * 1000 
@@ -58,21 +59,6 @@ export async function handleMessagesUpsert(params: {
         tenantId: device.tenantId,
         metadata: { messageId: key.id, error: errorMsg }
       }).catch(() => {});
-    }
-
-    // Show "escribiendo..." so the user sees activity instead of "esperando el mensaje. esto puede tomar tiempo"
-    // Presence expires in ~10s; if the reply is sent later, we also send composing in outbound before sending
-    try {
-      await params.sock.sendPresenceUpdate('composing', key.remoteJid).catch((err) => {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        logger.warn('Failed to send presence (composing)', errorMsg, {
-          deviceId: params.deviceId,
-          tenantId: device.tenantId,
-          metadata: { remoteJid: key.remoteJid, error: errorMsg }
-        }).catch(() => {});
-      });
-    } catch {
-      // best effort
     }
 
     const normalized = normalizeInboundMessage({
@@ -116,7 +102,11 @@ export async function handleMessagesUpsert(params: {
     console.log('[inbound-inspect]', JSON.stringify(inspectPayload, null, 2));
 
     // No notificar a los bots mensajes stub (ej. "No session record") — no son mensajes de usuario
+    if (normalized.content.type !== 'stub') {
+      console.log('[paso-2] Mensaje válido (no stub)', { messageId: key.id, remoteJid: key.remoteJid, contentType: normalized.content.type });
+    }
     if (normalized.content.type === 'stub') {
+      console.log('[paso-2] STUB_SKIP (mensaje no descifrado/stub)', { messageId: key.id, remoteJid: key.remoteJid, contentType: normalized.content.type });
       const stubText = normalized.content.text ?? '';
       const isNoMatchingSessions = /no matching sessions found for message/i.test(stubText);
       if (isNoMatchingSessions && key.remoteJid) {
@@ -152,6 +142,7 @@ export async function handleMessagesUpsert(params: {
         rawJson: rawJson as any
       }
     });
+    console.log('[paso-3] Evento creado', { eventId: event.id, messageId: key.id, remoteJid: key.remoteJid });
 
     // fan-out to all enabled endpoints for this tenant
     for (const endpoint of endpoints) {
@@ -166,6 +157,10 @@ export async function handleMessagesUpsert(params: {
         { deliveryId: delivery.id },
         { attempts: 5, backoff: { type: 'exponential', delay: 1000 }, removeOnComplete: true }
       );
+      console.log('[paso-4] Webhook encolado', { deliveryId: delivery.id, endpointId: endpoint.id, eventId: event.id, url: endpoint.url });
+    }
+    if (endpoints.length === 0) {
+      console.log('[paso-4] Sin endpoints de webhook', { eventId: event.id, tenantId: device.tenantId });
     }
 
     await prisma.device.update({

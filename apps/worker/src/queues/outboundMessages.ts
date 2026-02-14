@@ -23,10 +23,12 @@ export function startOutboundMessagesWorker() {
 
       const row = await prisma.outboundMessage.findUnique({ where: { id: job.data.outboundMessageId } });
       if (!row) {
+        console.log('[paso-8] FALLO outbound: mensaje no encontrado', { outboundMessageId: job.data.outboundMessageId });
         await logger.warn(`Outbound message ${job.data.outboundMessageId} not found`).catch(() => {});
         return;
       }
 
+      console.log('[paso-8] Worker procesando outbound', { outboundMessageId: row.id, to: row.to, deviceId: row.deviceId });
       // Update status to PROCESSING to indicate we're working on it
       await prisma.outboundMessage.update({
         where: { id: row.id },
@@ -46,6 +48,7 @@ export function startOutboundMessagesWorker() {
       // Check device status in DB
       const device = await prisma.device.findUnique({ where: { id: row.deviceId } }).catch(() => null);
       if (!device) {
+        console.log('[paso-8] FALLO outbound: device_not_found', { outboundMessageId: row.id, deviceId: row.deviceId });
         await prisma.outboundMessage.update({
           where: { id: row.id },
           data: { status: 'FAILED', error: 'device_not_found' }
@@ -59,6 +62,7 @@ export function startOutboundMessagesWorker() {
       }
 
       if (device.status !== 'ONLINE') {
+        console.log('[paso-8] FALLO outbound: device_not_online', { outboundMessageId: row.id, deviceId: row.deviceId, status: device.status });
         await prisma.outboundMessage.update({
           where: { id: row.id },
           data: { status: 'FAILED', error: `device_not_online:${device.status}` }
@@ -73,6 +77,7 @@ export function startOutboundMessagesWorker() {
 
       const sock = sessionManager.get(row.deviceId);
       if (!sock) {
+        console.log('[paso-8] FALLO outbound: device_not_connected (socket no en sessionManager)', { outboundMessageId: row.id, deviceId: row.deviceId });
         await prisma.outboundMessage.update({
           where: { id: row.id },
           data: { status: 'FAILED', error: 'device_not_connected' }
@@ -91,6 +96,7 @@ export function startOutboundMessagesWorker() {
 
       // Verify socket has user (means it's authenticated)
       if (!sock.user?.id) {
+        console.log('[paso-8] FALLO outbound: socket_not_authenticated', { outboundMessageId: row.id, deviceId: row.deviceId });
         await prisma.outboundMessage.update({
           where: { id: row.id },
           data: { status: 'FAILED', error: 'socket_not_authenticated' }
@@ -104,6 +110,7 @@ export function startOutboundMessagesWorker() {
       }
 
       if (row.type !== 'text') {
+        console.log('[paso-8] FALLO outbound: unsupported_type', { outboundMessageId: row.id, type: row.type });
         await prisma.outboundMessage.update({
           where: { id: row.id },
           data: { status: 'FAILED', error: `unsupported_type:${row.type}` }
@@ -147,9 +154,6 @@ export function startOutboundMessagesWorker() {
       }
 
       try {
-        // Show "escribiendo..." right before sending so user sees activity (reduces "esperando el mensaje")
-        await sock.sendPresenceUpdate('composing', to).catch(() => {});
-
         const sendStartTime = Date.now();
         const sent = await sock.sendMessage(to, { text });
         const sendDuration = Date.now() - sendStartTime;
@@ -159,6 +163,7 @@ export function startOutboundMessagesWorker() {
           where: { id: row.id },
           data: { status: 'SENT', providerMessageId, error: null }
         });
+        console.log('[paso-9] Mensaje enviado OK', { outboundMessageId: row.id, to, providerMessageId });
 
         // Log slow sends
         if (sendDuration > 5000) {
@@ -174,6 +179,7 @@ export function startOutboundMessagesWorker() {
           }).catch(() => {});
         }
       } catch (err: any) {
+        console.log('[paso-9] FALLO envío por socket', { outboundMessageId: row.id, to, error: err?.message ?? String(err) });
         await logger.error('Failed to send outbound message', err, {
           tenantId: row.tenantId,
           deviceId: row.deviceId,

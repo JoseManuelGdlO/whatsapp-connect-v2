@@ -14,9 +14,13 @@ type SessionEntry = {
   closing: boolean;
 };
 
+/** Debounce clear+reconnect per device so we don't disconnect constantly (breaks replies for everyone). */
+const CLEAR_RECONNECT_DEBOUNCE_MS = 10 * 60 * 1000; // 10 minutes
+
 export class SessionManager {
   private sessions = new Map<string, SessionEntry>();
   private cachedVersion: [number, number, number] | null = null;
+  private lastClearReconnectAt = new Map<string, number>();
 
   private async getVersion(): Promise<[number, number, number] | undefined> {
     if (this.cachedVersion) return this.cachedVersion;
@@ -293,32 +297,42 @@ export class SessionManager {
         await save().catch(() => {
           // Ignore save errors - non-critical
         });
-        // If we received a stub "No matching sessions" for a sender, clear that sender's keys and reconnect
+        // If we received a stub "No matching sessions", clear that sender's keys and reconnect at most once per 10 min per device
         if (upsertResult?.clearSenderAndReconnect) {
-          const { remoteJid, senderPn } = upsertResult.clearSenderAndReconnect;
-          const jids = [remoteJid, senderPn].filter(Boolean) as string[];
-          try {
-            await clearSessionsForJids(deviceId, jids);
-            await logger.info('Cleared session keys for sender, reconnecting', {
+          const now = Date.now();
+          const last = this.lastClearReconnectAt.get(deviceId) ?? 0;
+          if (now - last < CLEAR_RECONNECT_DEBOUNCE_MS) {
+            await logger.warn('Skipping clear+reconnect (debounced), device stays connected', '', {
               deviceId,
-              metadata: { remoteJid, senderPn, jids }
+              metadata: { remoteJid: upsertResult.clearSenderAndReconnect.remoteJid, nextAllowedInSec: Math.ceil((CLEAR_RECONNECT_DEBOUNCE_MS - (now - last)) / 1000) }
             }).catch(() => {});
-          } catch (clearErr) {
-            await logger.error('Failed to clear sender sessions', clearErr instanceof Error ? clearErr : new Error(String(clearErr)), {
-              deviceId,
-              metadata: { remoteJid, senderPn }
-            }).catch(() => {});
-          }
-          const current = this.sessions.get(deviceId);
-          if (current && !current.closing) {
-            current.closing = true;
-            this.sessions.delete(deviceId);
+          } else {
+            this.lastClearReconnectAt.set(deviceId, now);
+            const { remoteJid, senderPn } = upsertResult.clearSenderAndReconnect;
+            const jids = [remoteJid, senderPn].filter(Boolean) as string[];
             try {
-              sock.end(new Error('no_matching_sessions_reconnect'));
-            } catch {
-              // Ignore errors during disconnect
+              await clearSessionsForJids(deviceId, jids);
+              await logger.info('Cleared session keys for sender, reconnecting', {
+                deviceId,
+                metadata: { remoteJid, senderPn, jids }
+              }).catch(() => {});
+            } catch (clearErr) {
+              await logger.error('Failed to clear sender sessions', clearErr instanceof Error ? clearErr : new Error(String(clearErr)), {
+                deviceId,
+                metadata: { remoteJid, senderPn }
+              }).catch(() => {});
             }
-            setTimeout(() => void this.connect(deviceId), 5000);
+            const current = this.sessions.get(deviceId);
+            if (current && !current.closing) {
+              current.closing = true;
+              this.sessions.delete(deviceId);
+              try {
+                sock.end(new Error('no_matching_sessions_reconnect'));
+              } catch {
+                // Ignore errors during disconnect
+              }
+              setTimeout(() => void this.connect(deviceId), 5000);
+            }
           }
         }
       } catch (e: any) {

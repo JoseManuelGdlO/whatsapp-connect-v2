@@ -28,10 +28,12 @@ export function startWebhookDispatchWorker() {
         return;
       }
       if (!delivery.endpoint.enabled) {
+        console.log('[paso-5] Webhook omitido (endpoint deshabilitado)', { deliveryId: delivery.id, endpointId: delivery.endpoint.id });
         await logger.debug(`Webhook endpoint ${delivery.endpoint.id} is disabled, skipping`).catch(() => {});
         return;
       }
 
+      console.log('[paso-5] Enviando webhook', { deliveryId: delivery.id, endpointId: delivery.endpoint.id, url: delivery.endpoint.url, eventId: delivery.eventId });
       const payload = {
         eventId: delivery.eventId,
         tenantId: delivery.event.tenantId,
@@ -84,7 +86,9 @@ export function startWebhookDispatchWorker() {
           where: { id: delivery.id },
           data: { status: 'SUCCESS', attempts: { increment: 1 }, lastError: null, nextRetryAt: null }
         });
+        console.log('[paso-6] Webhook entregado OK', { deliveryId: delivery.id, statusCode: resp.status, eventId: delivery.eventId });
       } catch (err: any) {
+        console.log('[paso-6] Webhook falló', { deliveryId: delivery.id, error: err?.message ?? String(err) });
         await logger.error(
           `Webhook delivery error for ${delivery.endpoint.url}`,
           err,

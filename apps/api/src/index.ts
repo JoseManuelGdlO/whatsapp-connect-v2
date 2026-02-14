@@ -61,7 +61,18 @@ function authOrBotApiKeyRequired(req: express.Request, res: express.Response, ne
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
-app.use(morgan('dev'));
+app.use(
+  morgan('dev', {
+    skip: (req, _res) => {
+      const path = req.path ?? req.url?.split('?')[0] ?? '';
+      return (
+        req.method === 'GET' &&
+        (path.match(/^\/devices\/[^/]+\/status$/) != null ||
+          path.match(/^\/devices\/[^/]+\/messages\/(inbound|outbound)$/) != null)
+      );
+    }
+  })
+);
 app.use((_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   next();
@@ -614,6 +625,7 @@ app.post(
     { outboundMessageId: row.id },
     { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, removeOnComplete: true }
   );
+  console.log('[paso-7] Mensaje outbound encolado (API)', { outboundMessageId: row.id, to: row.to, deviceId: row.deviceId });
 
   res.status(202).json({ outboundMessageId: row.id, status: row.status });
   })
@@ -655,6 +667,7 @@ app.post(
     { outboundMessageId: row.id },
     { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, removeOnComplete: true }
   );
+  console.log('[paso-7] Mensaje outbound encolado (test)', { outboundMessageId: row.id, to: row.to, deviceId: row.deviceId });
 
   res.status(202).json({ outboundMessageId: row.id, status: row.status });
   })
