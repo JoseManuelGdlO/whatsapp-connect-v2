@@ -22,7 +22,7 @@ export async function handleMessagesUpsert(params: {
   const device = await prisma.device.findUnique({ where: { id: params.deviceId } });
   if (!device) return;
 
-  let result: MessagesUpsertResult | void;
+  let result: MessagesUpsertResult | void = undefined;
 
   const endpoints = await prisma.webhookEndpoint.findMany({
     where: { tenantId: device.tenantId, enabled: true }
