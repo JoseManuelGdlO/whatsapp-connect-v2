@@ -101,6 +101,29 @@ function AdminPage() {
   const { token, user } = useAuth();
   const { tenantIdOverride, setTenantIdOverride } = useTenantId();
   const [active, setActive] = useState<'clientes' | 'devices' | 'webhooks'>('clientes');
+  const [pingStatus, setPingStatus] = useState<string | null>(null);
+  const [pingLoading, setPingLoading] = useState(false);
+
+  const handlePing = async () => {
+    setPingLoading(true);
+    setPingStatus(null);
+    const start = performance.now();
+    try {
+      const res = await fetch(`${API_URL}/health`);
+      const ms = Math.round(performance.now() - start);
+      const data = await res.json();
+      if (res.ok && data?.ok) {
+        setPingStatus(`API conectado (${ms} ms)`);
+      } else {
+        setPingStatus(`API respondió: ${res.status}`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Sin conexión';
+      setPingStatus(`Error: ${msg}`);
+    } finally {
+      setPingLoading(false);
+    }
+  };
 
   if (user?.role !== 'SUPERADMIN') return <div className="card">Forbidden</div>;
 
@@ -114,6 +137,16 @@ function AdminPage() {
           <button onClick={() => setActive('webhooks')}>Webhooks</button>
         </div>
         <p className="muted">Selecciona un cliente para gestionar sus dispositivos y webhooks.</p>
+        <div className="actions" style={{ marginTop: 8, alignItems: 'center', gap: 8 }}>
+          <button type="button" onClick={handlePing} disabled={pingLoading}>
+            {pingLoading ? '...' : 'Ping API'}
+          </button>
+          {pingStatus != null && (
+            <span className={pingStatus.startsWith('Error') ? 'error' : 'muted'} style={{ fontSize: 14 }}>
+              {pingStatus}
+            </span>
+          )}
+        </div>
       </div>
       {active === 'clientes' ? (
         <ClientesAdmin
@@ -213,6 +246,49 @@ function ClientesAdmin({
     }
   };
 
+  const handleResetSession = async (device: Device) => {
+    setDeviceActionLoading(device.id);
+    try {
+      await apiJson(`/devices/${device.id}/disconnect`, token, { method: 'POST' });
+      await apiJson(`/devices/${device.id}/reset-session`, token, { method: 'POST' });
+      setMsg(`Sesión reiniciada en "${device.label}". Ve a Dispositivos y pulsa Conectar para nuevo QR.`);
+      const list = await apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantIdOverride)}`, token);
+      setDevices(list.map((x) => ({ ...x, label: x.label || x.id || 'Device sin nombre' })));
+    } catch (err: any) {
+      setMsg(`Error: ${err?.message ?? 'No se pudo reiniciar sesión'}`);
+    } finally {
+      setDeviceActionLoading(null);
+    }
+  };
+
+  const handleDeleteDevice = async (device: Device) => {
+    const isConnected = device.status === 'ONLINE' || device.status === 'QR';
+    const warning = isConnected
+      ? `El dispositivo "${device.label}" está ${device.status === 'ONLINE' ? 'conectado' : 'mostrando QR'}. Se desconectará antes de eliminarlo.\n\n¿Eliminar este dispositivo?`
+      : `¿Eliminar el dispositivo "${device.label}"?`;
+    if (!confirm(warning)) return;
+    setDeviceActionLoading(device.id);
+    try {
+      await apiJson(`/devices/${device.id}`, token, { method: 'DELETE' });
+      setDevices((prev) => prev.filter((x) => x.id !== device.id));
+      setMsg(`Dispositivo "${device.label}" eliminado.`);
+    } catch (err: any) {
+      setMsg(`Error: ${err?.message ?? 'No se pudo eliminar'}`);
+    } finally {
+      setDeviceActionLoading(null);
+    }
+  };
+
+  const handleCopyPublicLink = async (device: Device) => {
+    try {
+      const result = await apiJson<{ url: string }>(`/devices/${device.id}/public-link`, token, { method: 'POST' });
+      await navigator.clipboard.writeText(result.url);
+      setMsg('Link público (QR) copiado al portapapeles.');
+    } catch (err: any) {
+      setMsg(`Error: ${err?.message ?? 'No se pudo generar el link'}`);
+    }
+  };
+
   return (
     <>
       <div className="card">
@@ -240,7 +316,7 @@ function ClientesAdmin({
       </div>
       <div className="card">
         <h3>Clientes</h3>
-        <p className="muted">Haz clic en un cliente para ver sus dispositivos y reconectar o cerrar sesión.</p>
+        <p className="muted">Haz clic en un cliente para ver sus dispositivos (Conectar, Desconectar, Reiniciar sesión, link QR, Eliminar).</p>
         <div className="list">
           {tenants.map((t) => (
             <div key={t.id} className={`row ${tenantIdOverride === t.id ? 'active' : ''}`} style={{ cursor: 'default' }}>
@@ -293,14 +369,14 @@ function ClientesAdmin({
                       {d.lastError ? ` · ${d.lastError}` : ''}
                     </div>
                   </div>
-                  <div className="actions" style={{ margin: 0 }}>
+                  <div className="actions" style={{ margin: 0, flexWrap: 'wrap', gap: '4px' }}>
                     <button
                       type="button"
                       disabled={deviceActionLoading === d.id}
                       onClick={() => handleReconnect(d)}
                       style={{ padding: '4px 8px', fontSize: '12px' }}
                     >
-                      {deviceActionLoading === d.id ? '...' : 'Reconectar'}
+                      {deviceActionLoading === d.id ? '...' : 'Conectar'}
                     </button>
                     <button
                       type="button"
@@ -308,7 +384,33 @@ function ClientesAdmin({
                       onClick={() => handleLogout(d)}
                       style={{ padding: '4px 8px', fontSize: '12px' }}
                     >
-                      Cerrar sesión
+                      Desconectar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deviceActionLoading === d.id}
+                      onClick={() => handleResetSession(d)}
+                      style={{ padding: '4px 8px', fontSize: '12px' }}
+                    >
+                      Reiniciar sesión
+                    </button>
+                    {d.status === 'QR' ? (
+                      <button
+                        type="button"
+                        disabled={deviceActionLoading === d.id}
+                        onClick={() => handleCopyPublicLink(d)}
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                      >
+                        Copiar link QR
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={deviceActionLoading === d.id}
+                      onClick={() => handleDeleteDevice(d)}
+                      style={{ padding: '4px 8px', fontSize: '12px' }}
+                    >
+                      Eliminar
                     </button>
                   </div>
                 </div>
