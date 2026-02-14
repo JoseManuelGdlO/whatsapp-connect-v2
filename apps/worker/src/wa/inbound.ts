@@ -10,13 +10,19 @@ import { createLogger } from '@wc/logger';
 const webhookQueue = new Queue('webhook_dispatch', { connection: redis });
 const logger = createLogger(prisma, 'worker');
 
+export type MessagesUpsertResult = {
+  clearSenderAndReconnect?: { remoteJid: string; senderPn?: string };
+};
+
 export async function handleMessagesUpsert(params: {
   deviceId: string;
   sock: WASocket;
   messages: proto.IWebMessageInfo[];
-}) {
+}): Promise<MessagesUpsertResult | void> {
   const device = await prisma.device.findUnique({ where: { id: params.deviceId } });
   if (!device) return;
+
+  let result: MessagesUpsertResult | void;
 
   const endpoints = await prisma.webhookEndpoint.findMany({
     where: { tenantId: device.tenantId, enabled: true }
@@ -111,6 +117,22 @@ export async function handleMessagesUpsert(params: {
 
     // No notificar a los bots mensajes stub (ej. "No session record") — no son mensajes de usuario
     if (normalized.content.type === 'stub') {
+      const stubText = normalized.content.text ?? '';
+      const isNoMatchingSessions = /no matching sessions found for message/i.test(stubText);
+      if (isNoMatchingSessions && key.remoteJid) {
+        const keyAny = key as { senderPn?: string };
+        result = {
+          clearSenderAndReconnect: {
+            remoteJid: key.remoteJid,
+            senderPn: keyAny.senderPn
+          }
+        };
+        await logger.warn('Stub: No matching sessions - will clear sender session and reconnect', '', {
+          deviceId: params.deviceId,
+          tenantId: device.tenantId,
+          metadata: { remoteJid: key.remoteJid, senderPn: keyAny.senderPn }
+        }).catch(() => {});
+      }
       await prisma.device.update({
         where: { id: device.id },
         data: { lastSeenAt: new Date() }
@@ -166,5 +188,7 @@ export async function handleMessagesUpsert(params: {
       }).catch(() => {});
     }
   }
+
+  return result;
 }
 

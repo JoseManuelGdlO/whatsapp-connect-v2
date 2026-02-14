@@ -2,7 +2,7 @@ import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion } from '@whis
 import type { WASocket, proto } from '@whiskeysockets/baileys';
 
 import { prisma } from '../lib/prisma.js';
-import { loadAuthState } from './authStateDb.js';
+import { loadAuthState, clearSessionsForJids } from './authStateDb.js';
 import { handleMessagesUpsert } from './inbound.js';
 import { createLogger } from '@wc/logger';
 
@@ -232,6 +232,7 @@ export class SessionManager {
       const errorMessage = err?.message ?? String(err);
       const isSessionError = errorMessage.includes('Over 2000 messages into the future') || 
                             errorMessage.includes('SessionError') ||
+                            errorMessage.includes('No matching sessions') ||
                             errorMessage.includes('message counter') ||
                             errorMessage.includes('Failed to decrypt message');
       
@@ -287,11 +288,39 @@ export class SessionManager {
 
     sock.ev.on('messages.upsert', async (m: any) => {
       try {
-        await handleMessagesUpsert({ deviceId, sock, messages: m.messages ?? [] });
+        const upsertResult = await handleMessagesUpsert({ deviceId, sock, messages: m.messages ?? [] });
         // Save state after processing messages to persist session key updates
         await save().catch(() => {
           // Ignore save errors - non-critical
         });
+        // If we received a stub "No matching sessions" for a sender, clear that sender's keys and reconnect
+        if (upsertResult?.clearSenderAndReconnect) {
+          const { remoteJid, senderPn } = upsertResult.clearSenderAndReconnect;
+          const jids = [remoteJid, senderPn].filter(Boolean) as string[];
+          try {
+            await clearSessionsForJids(deviceId, jids);
+            await logger.info('Cleared session keys for sender, reconnecting', {
+              deviceId,
+              metadata: { remoteJid, senderPn, jids }
+            }).catch(() => {});
+          } catch (clearErr) {
+            await logger.error('Failed to clear sender sessions', clearErr instanceof Error ? clearErr : new Error(String(clearErr)), {
+              deviceId,
+              metadata: { remoteJid, senderPn }
+            }).catch(() => {});
+          }
+          const current = this.sessions.get(deviceId);
+          if (current && !current.closing) {
+            current.closing = true;
+            this.sessions.delete(deviceId);
+            try {
+              sock.end(new Error('no_matching_sessions_reconnect'));
+            } catch {
+              // Ignore errors during disconnect
+            }
+            setTimeout(() => void this.connect(deviceId), 5000);
+          }
+        }
       } catch (e: any) {
         // Try to handle session sync errors
         const handled = await handleSessionSyncError(e);

@@ -151,3 +151,70 @@ export async function loadAuthState(deviceId: string): Promise<{
   return { state, save: saveWrapper, clearCorruptedSessions };
 }
 
+/**
+ * Clear session and sender-key entries for specific JIDs (e.g. when we get
+ * "No matching sessions found for message"). This forces a fresh key exchange
+ * on the next message from that contact. Call this then reconnect the device.
+ */
+export async function clearSessionsForJids(deviceId: string, jids: string[]): Promise<void> {
+  const userParts = jids
+    .filter(Boolean)
+    .map((jid) => String(jid).split('@')[0])
+    .filter((u) => u.length > 0);
+  if (userParts.length === 0) return;
+
+  const existing = await prisma.waSession.findUnique({ where: { deviceId } });
+  if (!existing?.authStateEnc) return;
+
+  let plaintext: string;
+  try {
+    plaintext = decryptString(existing.authStateEnc);
+  } catch {
+    return;
+  }
+
+  const parsed = JSON.parse(plaintext, BufferJSON.reviver) as { creds: any; keysData: StoredKeyData };
+  const keysData = parsed.keysData ?? {};
+  let changed = false;
+
+  for (const keyType of ['session', 'sessions']) {
+    const bucket = keysData[keyType];
+    if (!bucket || typeof bucket !== 'object') continue;
+    for (const userPart of userParts) {
+      for (const id of Object.keys(bucket)) {
+        if (id === userPart || id.startsWith(userPart + ':')) {
+          delete bucket[id];
+          changed = true;
+        }
+      }
+    }
+  }
+
+  const senderKeyBucket = keysData['sender-key'];
+  if (senderKeyBucket && typeof senderKeyBucket === 'object') {
+    for (const userPart of userParts) {
+      for (const keyStr of Object.keys(senderKeyBucket)) {
+        if (keyStr.includes(userPart)) {
+          delete senderKeyBucket[keyStr];
+          changed = true;
+        }
+      }
+    }
+  }
+
+  if (!changed) return;
+
+  try {
+    const payload = JSON.stringify({ creds: parsed.creds, keysData }, BufferJSON.replacer);
+    const authStateEnc = encryptString(payload);
+    await prisma.waSession.upsert({
+      where: { deviceId },
+      create: { deviceId, authStateEnc },
+      update: { authStateEnc }
+    });
+  } catch (err) {
+    console.error(`[authStateDb] Failed to save after clearSessionsForJids for ${deviceId}:`, err);
+    throw err;
+  }
+}
+
