@@ -48,3 +48,11 @@ Para que tu bot responda “al mismo chat”:
 - `deviceId`: desde qué WhatsApp responder (se usa en `/devices/:id/messages/send`)
 - `normalized.from`: chat destino (JID; usar tal cual como `to`)
 - `tenantId` o header `x-tenant-id`: úsalo como `x-tenant-id` al llamar el API (modo bot con `x-api-key`)
+
+### "Esperando el mensaje. Esto puede tomar tiempo"
+WhatsApp muestra ese texto al usuario cuando el negocio **no responde** (o no hay señal de actividad) en un tiempo. Causas típicas:
+- **Respuesta lenta**: el webhook recibe el evento pero tu sistema tarda en llamar a `POST /devices/:id/messages/send`.
+- **Cola cargada**: muchos mensajes en `outbound_messages` o Redis lento retrasan el envío.
+- **Sin respuesta**: el webhook no llama al API para enviar mensaje (bot apagado, error, etc.).
+
+El worker mitiga esto: marca el mensaje como leído, envía presencia "escribiendo..." al recibir el mensaje y de nuevo justo antes de enviar la respuesta, para que el usuario vea actividad en lugar de "esperando el mensaje".

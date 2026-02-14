@@ -38,7 +38,6 @@ export async function handleMessagesUpsert(params: {
     // This is critical - without this, WhatsApp will send the automatic "waiting" message after a few minutes
     try {
       await params.sock.readMessages([key]).catch((err) => {
-        // Log but don't fail - acknowledgment is best effort
         const errorMsg = err instanceof Error ? err.message : String(err);
         logger.warn('Failed to acknowledge incoming message', errorMsg, {
           deviceId: params.deviceId,
@@ -47,13 +46,27 @@ export async function handleMessagesUpsert(params: {
         }).catch(() => {});
       });
     } catch (err) {
-      // Ignore acknowledgment errors - continue processing
       const errorMsg = err instanceof Error ? err.message : String(err);
       logger.warn('Exception while acknowledging message', errorMsg, {
         deviceId: params.deviceId,
         tenantId: device.tenantId,
         metadata: { messageId: key.id, error: errorMsg }
       }).catch(() => {});
+    }
+
+    // Show "escribiendo..." so the user sees activity instead of "esperando el mensaje. esto puede tomar tiempo"
+    // Presence expires in ~10s; if the reply is sent later, we also send composing in outbound before sending
+    try {
+      await params.sock.sendPresenceUpdate('composing', key.remoteJid).catch((err) => {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        logger.warn('Failed to send presence (composing)', errorMsg, {
+          deviceId: params.deviceId,
+          tenantId: device.tenantId,
+          metadata: { remoteJid: key.remoteJid, error: errorMsg }
+        }).catch(() => {});
+      });
+    } catch {
+      // best effort
     }
 
     const normalized = normalizeInboundMessage({

@@ -147,6 +147,9 @@ export function startOutboundMessagesWorker() {
       }
 
       try {
+        // Show "escribiendo..." right before sending so user sees activity (reduces "esperando el mensaje")
+        await sock.sendPresenceUpdate('composing', to).catch(() => {});
+
         const sendStartTime = Date.now();
         const sent = await sock.sendMessage(to, { text });
         const sendDuration = Date.now() - sendStartTime;
