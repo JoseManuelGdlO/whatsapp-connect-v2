@@ -130,6 +130,7 @@ export async function loadAuthState(deviceId: string): Promise<{
     try {
       // Clear session-related keys that might be corrupted
       // Baileys uses 'session' (singular), 'sender-key', and 'sender-key-memory'
+      // Do NOT clear 'lid-mapping', 'device-list', or 'tctoken' (Baileys v7 LID system)
       const keysToClear = ['session', 'sender-key', 'sender-key-memory'];
       for (const keyType of keysToClear) {
         if (keysData[keyType]) {

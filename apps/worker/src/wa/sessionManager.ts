@@ -56,8 +56,9 @@ export class SessionManager {
       // This function allows Baileys to retrieve previous messages when validating message sequence
       const getMessage = async (key: proto.IMessageKey): Promise<proto.IMessage | undefined> => {
         try {
-          if (!key.remoteJid || !key.id) return undefined;
-          
+          const keyRemote = (key as { remoteJid?: string; remoteJidAlt?: string }).remoteJid ?? (key as { remoteJidAlt?: string }).remoteJidAlt;
+          if (!key.id || !keyRemote) return undefined;
+
           // Search for the message in our events table
           // We search both inbound and potentially outbound messages
           const events = await prisma.event.findMany({
@@ -72,20 +73,32 @@ export class SessionManager {
             take: 500 // Search in recent messages
           });
 
-          // Find the exact message by key
+          const keyParticipant = (key as { participant?: string; participantAlt?: string }).participant ?? (key as { participantAlt?: string }).participantAlt;
+
+          // Find the exact message by key (v7: match remoteJid/remoteJidAlt and participant/participantAlt)
           for (const event of events) {
             if (event.rawJson) {
               const raw = event.rawJson as any;
-              const msgKey = raw.key;
-              if (msgKey?.id === key.id && 
-                  msgKey?.remoteJid === key.remoteJid &&
-                  (key.fromMe === undefined || msgKey?.fromMe === key.fromMe)) {
-                // Return the message part, not the full WebMessageInfo
-                return raw.message as proto.IMessage;
-              }
+              const msgKey = raw.key as { id?: string; remoteJid?: string; remoteJidAlt?: string; participant?: string; participantAlt?: string; fromMe?: boolean } | undefined;
+              if (!msgKey?.id || msgKey.id !== key.id) continue;
+              if (key.fromMe !== undefined && msgKey.fromMe !== key.fromMe) continue;
+
+              const keyRemotes = [key.remoteJid, (key as { remoteJidAlt?: string }).remoteJidAlt].filter((x): x is string => typeof x === 'string');
+              const msgRemotes = [msgKey.remoteJid, msgKey.remoteJidAlt].filter((x): x is string => typeof x === 'string');
+              const remoteMatch = keyRemotes.some((k) => msgRemotes.includes(k));
+              if (!remoteMatch) continue;
+
+              const keyParticipants = [key.participant, keyParticipant].filter((x): x is string => typeof x === 'string');
+              const msgParticipants = [msgKey.participant, msgKey.participantAlt].filter((x): x is string => typeof x === 'string');
+              const participantMatch = keyParticipants.length === 0
+                ? msgParticipants.length === 0
+                : keyParticipants.some((k) => msgParticipants.includes(k));
+              if (!participantMatch) continue;
+
+              return raw.message as proto.IMessage;
             }
           }
-          
+
           return undefined;
         } catch (err) {
           // If getMessage fails, return undefined - Baileys will handle it

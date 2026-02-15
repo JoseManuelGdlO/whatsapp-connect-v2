@@ -73,7 +73,7 @@ export function normalizeInboundMessage(params: {
 }): NormalizedInboundMessage {
   const m = params.message;
   const messageId = m.key?.id ?? '';
-  const from = resolveFromJid(m.key);
+  const from = resolveFromJid(m.key ?? undefined);
   const to = params.deviceJid;
   const timestamp = typeof m.messageTimestamp === 'number' ? m.messageTimestamp : (m.messageTimestamp as any)?.toNumber?.() ?? null;
 
