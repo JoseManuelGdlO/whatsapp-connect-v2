@@ -14,12 +14,13 @@ type SessionEntry = {
   closing: boolean;
 };
 
-/** Debounce clear+reconnect per device so we don't disconnect constantly (breaks replies for everyone). */
+/** Debounce clear per (device, sender) so we don't clear the same sender too often, but different senders can be cleared. */
 const CLEAR_RECONNECT_DEBOUNCE_MS = 10 * 60 * 1000; // 10 minutes
 
 export class SessionManager {
   private sessions = new Map<string, SessionEntry>();
   private cachedVersion: [number, number, number] | null = null;
+  /** Key: `${deviceId}:${senderKey}` (senderKey = senderPn ?? remoteJid) */
   private lastClearReconnectAt = new Map<string, number>();
 
   private async getVersion(): Promise<[number, number, number] | undefined> {
@@ -302,16 +303,18 @@ export class SessionManager {
         });
         // If we received a stub "No matching sessions", clear that sender's keys in memory and persist to DB
         if (upsertResult?.clearSenderAndReconnect) {
+          const { remoteJid, senderPn } = upsertResult.clearSenderAndReconnect;
+          const senderKey = senderPn ?? remoteJid;
+          const debounceKey = `${deviceId}:${senderKey}`;
           const now = Date.now();
-          const last = this.lastClearReconnectAt.get(deviceId) ?? 0;
+          const last = this.lastClearReconnectAt.get(debounceKey) ?? 0;
           if (now - last < CLEAR_RECONNECT_DEBOUNCE_MS) {
-            await logger.warn('Skipping clear sender sessions (debounced)', '', {
+            await logger.warn('Skipping clear sender sessions (debounced for this sender)', '', {
               deviceId,
-              metadata: { remoteJid: upsertResult.clearSenderAndReconnect.remoteJid, nextAllowedInSec: Math.ceil((CLEAR_RECONNECT_DEBOUNCE_MS - (now - last)) / 1000) }
+              metadata: { remoteJid, senderPn, nextAllowedInSec: Math.ceil((CLEAR_RECONNECT_DEBOUNCE_MS - (now - last)) / 1000) }
             }).catch(() => {});
           } else {
-            this.lastClearReconnectAt.set(deviceId, now);
-            const { remoteJid, senderPn } = upsertResult.clearSenderAndReconnect;
+            this.lastClearReconnectAt.set(debounceKey, now);
             try {
               clearSenderSessionsInMemory(remoteJid, senderPn ?? null);
               if ((save as any).immediate) {
