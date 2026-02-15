@@ -419,6 +419,39 @@ app.post(
   })
 );
 
+app.post(
+  '/devices/:id/reset-sender-sessions',
+  authRequired,
+  requireRole(UserRole.SUPERADMIN),
+  asyncHandler(async (req, res) => {
+    const auth = (req as any).auth as JwtPayload;
+    const scope = getTenantScope(auth);
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: 'not_found' });
+    if (!scope.isSuperadmin && device.tenantId !== scope.tenantId) return res.status(403).json({ error: 'forbidden' });
+
+    const events = await prisma.event.findMany({
+      where: { deviceId: device.id, type: 'message.inbound' },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+      select: { normalizedJson: true }
+    });
+    const jids = new Set<string>();
+    for (const e of events) {
+      const n = e.normalizedJson as { from?: string } | null;
+      if (n?.from && typeof n.from === 'string') jids.add(n.from);
+    }
+    const jidList = [...jids];
+
+    await deviceCommandsQueue.add(
+      'reset-sender-sessions',
+      { deviceId: device.id, jids: jidList },
+      { removeOnComplete: true, removeOnFail: false }
+    );
+    res.status(202).json({ ok: true, clearedCount: jidList.length });
+  })
+);
+
 app.get(
   '/devices/:id/stream',
   authRequired,

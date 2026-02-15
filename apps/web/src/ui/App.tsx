@@ -659,6 +659,27 @@ function DevicesPage() {
               >
                 Reset session
               </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await apiJson<{ ok: boolean; clearedCount: number }>(
+                      `/devices/${selected.id}/reset-sender-sessions`,
+                      token!,
+                      { method: 'POST' }
+                    );
+                    alert(
+                      res.clearedCount > 0
+                        ? `Sesiones de ${res.clearedCount} contacto(s) reiniciadas. Si tenían "No matching sessions", que reenvíen el mensaje.`
+                        : 'Listo. No había contactos recientes para reiniciar.'
+                    );
+                  } catch (err: any) {
+                    alert(`Error: ${err?.message ?? 'No se pudieron reiniciar sesiones'}`);
+                  }
+                }}
+                title="Reinicia las sesiones de cifrado de los contactos que te escribieron"
+              >
+                Reset sesiones por contacto
+              </button>
               {selected.status === 'QR' && (
                 <button
                   onClick={async () => {

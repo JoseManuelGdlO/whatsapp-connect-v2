@@ -10,6 +10,8 @@ Al arrancar, el worker reconecta **todos los dispositivos que tienen sesión gua
 
 - **`WORKER_RECONNECT_ALL_DELAY_MS`** (opcional): milisegundos de espera antes de empezar las reconexiones (por defecto 5000).
 - **`WORKER_RECONNECT_STAGGER_MS`** (opcional): milisegundos entre cada reconexión para no saturar (por defecto 800). Con ~20 dispositivos son unos 16 s en total.
+- **`WORKER_INBOUND_ACK_MESSAGE`** (opcional): si está definido, el worker envía este texto como mensaje automático al recibir cada mensaje entrante. Sirve para "resetear" la conversación y evitar que WhatsApp muestre "Esperando el mensaje" cuando el error persiste (ej. `Un momento, te respondo en seguida.`).
+- **`WORKER_COMPOSING_BEFORE_SEND_MS`** (opcional): milisegundos que se muestra "escribiendo..." antes de enviar cada respuesta (por defecto 1500).
 
 ## Responsabilidad
 - Mantener sesiones WhatsApp Web por `deviceId`
@@ -66,4 +68,6 @@ WhatsApp muestra ese texto al usuario cuando el negocio **no responde** (o no ha
 - **Cola cargada**: muchos mensajes en `outbound_messages` o Redis lento retrasan el envío.
 - **Sin respuesta**: el webhook no llama al API para enviar mensaje (bot apagado, error, etc.).
 
-El worker mitiga esto: marca el mensaje como leído, envía presencia "escribiendo..." **al recibir el mensaje** (para que el usuario vea actividad de inmediato) y de nuevo justo antes de enviar la respuesta. Si el bot no responde, la presencia "escribiendo..." se limpia automáticamente a los ~25 s. Opcionalmente puedes afinar la duración de "escribiendo..." antes del envío con `WORKER_COMPOSING_BEFORE_SEND_MS` (por defecto 1500 ms).
+El worker mitiga esto: envía presencia "escribiendo..." **en cuanto llega el mensaje** (antes de marcar como leído), luego marca como leído, y de nuevo "escribiendo..." justo antes de enviar la respuesta. Si el bot no responde, la presencia se limpia a los ~25 s. Opcionalmente: `WORKER_COMPOSING_BEFORE_SEND_MS` (por defecto 1500 ms) para la duración antes del envío.
+
+**Si el error persiste** (por ejemplo el usuario ya vio "Esperando el mensaje" y al reenviar sigue igual), la única forma de "resetear" esa conversación es que el negocio **envíe un mensaje real**. Puedes activar un **mensaje de acuse automático**: define `WORKER_INBOUND_ACK_MESSAGE` (ej. `Un momento, te respondo en seguida.`) y el worker enviará ese texto al chat en cuanto reciba cualquier mensaje entrante. Así la conversación recibe siempre al menos un mensaje y WhatsApp deja de mostrar "Esperando el mensaje". El bot puede seguir respondiendo después por webhook; el acuse es adicional y opcional.

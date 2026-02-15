@@ -133,6 +133,23 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
     }
   };
 
+  const handleResetSenderSessions = async (device: Device) => {
+    try {
+      const res = await apiJson<{ ok: boolean; clearedCount: number }>(
+        `/devices/${device.id}/reset-sender-sessions`,
+        token,
+        { method: 'POST' }
+      );
+      setMsg(
+        res.clearedCount > 0
+          ? `Sesiones de ${res.clearedCount} contacto(s) reiniciadas. Si tenían "No matching sessions", que reenvíen el mensaje.`
+          : 'Listo. No había contactos recientes para reiniciar.'
+      );
+    } catch (err: unknown) {
+      setMsg(`Error: ${err instanceof Error ? err.message : 'No se pudieron reiniciar sesiones por contacto'}`);
+    }
+  };
+
   return (
     <>
       <div className="card">
@@ -224,6 +241,14 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
                 </button>
                 <button
                   type="button"
+                  onClick={() => handleResetSenderSessions(d)}
+                  style={{ padding: '4px 8px', fontSize: '12px' }}
+                  title="Reinicia las sesiones de cifrado de los contactos que te escribieron (útil si ven &quot;No matching sessions&quot;)"
+                >
+                  Reset sesiones por contacto
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleDelete(d.id, d.label, d.status)}
                   style={{ padding: '4px 8px', fontSize: '12px' }}
                 >
@@ -260,6 +285,13 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
             </button>
             <button type="button" onClick={() => handleResetSession(selectedDevice)}>
               Reset connection
+            </button>
+            <button
+              type="button"
+              onClick={() => handleResetSenderSessions(selectedDevice)}
+              title="Reinicia las sesiones de cifrado de los contactos que te escribieron (útil si ven &quot;No matching sessions&quot;)"
+            >
+              Reset sesiones por contacto
             </button>
             {selectedDevice.status === 'QR' ? (
               <button

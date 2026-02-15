@@ -2,13 +2,14 @@ import { Worker } from 'bullmq';
 
 import { redis } from '../lib/redis.js';
 import { SessionManager } from '../wa/sessionManager.js';
+import { clearSessionsForJids } from '../wa/authStateDb.js';
 import { prisma } from '../lib/prisma.js';
 import { createLogger } from '@wc/logger';
 
 export const sessionManager = new SessionManager();
 const logger = createLogger(prisma, 'worker');
 
-type JobData = { deviceId: string };
+type JobData = { deviceId: string; jids?: string[] };
 
 export function startDeviceCommandsWorker() {
   const worker = new Worker<JobData>(
@@ -31,6 +32,16 @@ export function startDeviceCommandsWorker() {
         if (job.name === 'disconnect') {
           await logger.info(`Disconnecting device ${deviceId}`, { deviceId }).catch(() => {});
           await sessionManager.disconnect(deviceId);
+          return;
+        }
+
+        if (job.name === 'reset-sender-sessions') {
+          const jids = (job.data as JobData).jids ?? [];
+          await logger.info(`Resetting sender sessions for device ${deviceId}`, {
+            deviceId,
+            metadata: { jidCount: jids.length }
+          }).catch(() => {});
+          await clearSessionsForJids(deviceId, jids);
           return;
         }
 

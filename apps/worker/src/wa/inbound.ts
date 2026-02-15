@@ -8,7 +8,14 @@ import { normalizeInboundMessage } from './normalize.js';
 import { createLogger } from '@wc/logger';
 
 const webhookQueue = new Queue('webhook_dispatch', { connection: redis });
+const outboundQueue = new Queue('outbound_messages', { connection: redis });
 const logger = createLogger(prisma, 'worker');
+
+function toJid(to: string): string {
+  if (!to) return to;
+  if (to.includes('@')) return to;
+  return `${to.replace(/\D/g, '')}@s.whatsapp.net`;
+}
 
 export type MessagesUpsertResult = {
   clearSenderAndReconnect?: { remoteJid: string; senderPn?: string };
@@ -42,9 +49,23 @@ export async function handleMessagesUpsert(params: {
       : (msg.messageTimestamp as any)?.toNumber?.() ? (msg.messageTimestamp as any).toNumber() * 1000 
       : messageReceivedAt;
 
-    // Acknowledge message immediately to prevent WhatsApp "waiting" message
-    // This tells WhatsApp we received the message and are processing it
-    // This is critical - without this, WhatsApp will send the automatic "waiting" message after a few minutes
+    // Send "typing" presence FIRST so user sees "escribiendo..." immediately (reduces "Esperando el mensaje")
+    const remoteJid = key.remoteJid;
+    params.sock.sendPresenceUpdate('composing', remoteJid).catch((err) => {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.warn('Failed to send composing presence on inbound', errorMsg, {
+        deviceId: params.deviceId,
+        tenantId: device.tenantId,
+        metadata: { messageId: key.id, remoteJid, error: errorMsg }
+      }).catch(() => {});
+    });
+    // Clear "typing" after a while if the bot never replies (avoid leaving "escribiendo..." forever)
+    const INBOUND_COMPOSING_PAUSE_AFTER_MS = 25_000;
+    setTimeout(() => {
+      params.sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
+    }, INBOUND_COMPOSING_PAUSE_AFTER_MS);
+
+    // Then acknowledge message (mark as read) so WhatsApp knows we received it
     try {
       await params.sock.readMessages([key]).catch((err) => {
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -62,22 +83,6 @@ export async function handleMessagesUpsert(params: {
         metadata: { messageId: key.id, error: errorMsg }
       }).catch(() => {});
     }
-
-    // Send "typing" presence so user sees "escribiendo..." immediately (reduces "Esperando el mensaje")
-    const remoteJid = key.remoteJid;
-    params.sock.sendPresenceUpdate('composing', remoteJid).catch((err) => {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.warn('Failed to send composing presence on inbound', errorMsg, {
-        deviceId: params.deviceId,
-        tenantId: device.tenantId,
-        metadata: { messageId: key.id, remoteJid, error: errorMsg }
-      }).catch(() => {});
-    });
-    // Clear "typing" after a while if the bot never replies (avoid leaving "escribiendo..." forever)
-    const INBOUND_COMPOSING_PAUSE_AFTER_MS = 25_000;
-    setTimeout(() => {
-      params.sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
-    }, INBOUND_COMPOSING_PAUSE_AFTER_MS);
 
     const normalized = normalizeInboundMessage({
       message: msg,
@@ -221,6 +226,37 @@ export async function handleMessagesUpsert(params: {
     }
     if (endpoints.length === 0) {
       console.log('[paso-4] Sin endpoints de webhook', { eventId: event.id, tenantId: device.tenantId });
+    }
+
+    // Optional: send an immediate ack message to "reset" the conversation so WhatsApp stops showing "Esperando el mensaje"
+    const ackText = process.env.WORKER_INBOUND_ACK_MESSAGE?.trim();
+    if (ackText && normalized.from) {
+      try {
+        const to = toJid(normalized.from);
+        const ackRow = await prisma.outboundMessage.create({
+          data: {
+            tenantId: device.tenantId,
+            deviceId: device.id,
+            to,
+            type: 'text',
+            payloadJson: { text: ackText },
+            isTest: false
+          }
+        });
+        await outboundQueue.add(
+          'send',
+          { outboundMessageId: ackRow.id },
+          { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, removeOnComplete: true }
+        );
+        console.log('[paso-4-ack] Acuse encolado para resetear conversación', { outboundMessageId: ackRow.id, to });
+      } catch (ackErr) {
+        const errMsg = ackErr instanceof Error ? ackErr.message : String(ackErr);
+        logger.warn('Failed to enqueue inbound ack message', errMsg, {
+          deviceId: params.deviceId,
+          tenantId: device.tenantId,
+          metadata: { messageId: key.id, remoteJid: key.remoteJid, error: errMsg }
+        }).catch(() => {});
+      }
     }
 
     await prisma.device.update({

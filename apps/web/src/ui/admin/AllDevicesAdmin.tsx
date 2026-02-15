@@ -100,6 +100,26 @@ export function AllDevicesAdmin({ token }: { token: string }) {
     }
   };
 
+  const handleResetSenderSessions = async (device: Device) => {
+    setDeviceActionLoading(device.id);
+    try {
+      const res = await apiJson<{ ok: boolean; clearedCount: number }>(
+        `/devices/${device.id}/reset-sender-sessions`,
+        token,
+        { method: 'POST' }
+      );
+      setMsg(
+        res.clearedCount > 0
+          ? `Sesiones de ${res.clearedCount} contacto(s) reiniciadas en "${device.label}". Si tenían "No matching sessions", que reenvíen el mensaje.`
+          : `Listo. No había contactos recientes para reiniciar en "${device.label}".`
+      );
+    } catch (err: unknown) {
+      setMsg(`Error: ${err instanceof Error ? err.message : 'No se pudieron reiniciar sesiones por contacto'}`);
+    } finally {
+      setDeviceActionLoading(null);
+    }
+  };
+
   const handlePing = async (device: Device) => {
     const phone = (pingPhoneByDevice[device.id] ?? '').trim();
     if (!phone) {
@@ -197,6 +217,15 @@ export function AllDevicesAdmin({ token }: { token: string }) {
                         style={{ padding: '4px 8px', fontSize: '12px' }}
                       >
                         Reset connection
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deviceActionLoading === d.id}
+                        onClick={() => handleResetSenderSessions(d)}
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                        title="Reinicia las sesiones de cifrado de los contactos que te escribieron (útil si ven &quot;No matching sessions&quot;)"
+                      >
+                        Reset sesiones por contacto
                       </button>
                     </div>
                     <div style={{ width: '100%', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 4, paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>
