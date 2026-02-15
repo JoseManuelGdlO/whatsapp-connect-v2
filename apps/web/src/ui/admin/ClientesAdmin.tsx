@@ -17,6 +17,8 @@ export function ClientesAdmin({
   const [devices, setDevices] = useState<Device[]>([]);
   const [devicesLoading, setDevicesLoading] = useState(false);
   const [deviceActionLoading, setDeviceActionLoading] = useState<string | null>(null);
+  const [pingPhoneByDevice, setPingPhoneByDevice] = useState<Record<string, string>>({});
+  const [pingLoadingDeviceId, setPingLoadingDeviceId] = useState<string | null>(null);
 
   const selectedTenant = tenants.find((t) => t.id === tenantIdOverride);
 
@@ -125,6 +127,32 @@ export function ClientesAdmin({
     }
   };
 
+  const handlePing = async (device: Device) => {
+    const phone = (pingPhoneByDevice[device.id] ?? '').trim();
+    if (!phone) {
+      setMsg('Indica un número de teléfono para enviar el ping.');
+      return;
+    }
+    if (device.status !== 'ONLINE') {
+      setMsg('El dispositivo debe estar conectado (ONLINE) para enviar ping.');
+      return;
+    }
+    setPingLoadingDeviceId(device.id);
+    setMsg(null);
+    try {
+      await apiJson(`/devices/${device.id}/messages/test`, token, {
+        method: 'POST',
+        body: JSON.stringify({ to: phone, text: 'Ping desde sistema' })
+      });
+      setMsg(`Ping enviado a ${phone} desde "${device.label}".`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'No se pudo enviar';
+      setMsg(message === 'device_not_online' ? 'Dispositivo no conectado.' : `Error: ${message}`);
+    } finally {
+      setPingLoadingDeviceId(null);
+    }
+  };
+
   return (
     <>
       <div className="card">
@@ -152,7 +180,7 @@ export function ClientesAdmin({
       </div>
       <div className="card">
         <h3>Clientes</h3>
-        <p className="muted">Haz clic en un cliente para ver sus dispositivos (Conectar, Desconectar, Reiniciar sesión, link QR, Eliminar).</p>
+        <p className="muted">Haz clic en un cliente para ver sus dispositivos (Conectar, Reconectar, Desconectar, Reset connection, Ping, link QR, Eliminar).</p>
         <div className="list">
           {tenants.map((t) => (
             <div key={t.id} className={`row ${tenantIdOverride === t.id ? 'active' : ''}`} style={{ cursor: 'default' }}>
@@ -194,63 +222,86 @@ export function ClientesAdmin({
             <p className="muted">Este cliente no tiene dispositivos.</p>
           ) : (
             <div className="list">
-              {devices.map((d) => (
-                <div key={d.id} className="row" style={{ cursor: 'default', flexWrap: 'wrap', gap: '8px' }}>
-                  <div style={{ flex: 1, minWidth: 120 }}>
-                    <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px' }}>
-                      {d.label || d.id || 'Device sin nombre'}
+              {devices.map((d) => {
+                const isOfflineOrError = d.status === 'OFFLINE' || d.status === 'ERROR';
+                const connectLabel = isOfflineOrError ? 'Reconectar' : 'Conectar';
+                return (
+                  <div key={d.id} className="row" style={{ cursor: 'default', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ flex: 1, minWidth: 120 }}>
+                      <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px' }}>
+                        {d.label || d.id || 'Device sin nombre'}
+                      </div>
+                      <div className="rowMeta" style={{ fontSize: '12px', color: '#64748b' }}>
+                        {d.status}
+                        {d.lastError ? ` · ${d.lastError}` : ''}
+                      </div>
                     </div>
-                    <div className="rowMeta" style={{ fontSize: '12px', color: '#64748b' }}>
-                      {d.status}
-                      {d.lastError ? ` · ${d.lastError}` : ''}
-                    </div>
-                  </div>
-                  <div className="actions" style={{ margin: 0, flexWrap: 'wrap', gap: '4px' }}>
-                    <button
-                      type="button"
-                      disabled={deviceActionLoading === d.id}
-                      onClick={() => handleReconnect(d)}
-                      style={{ padding: '4px 8px', fontSize: '12px' }}
-                    >
-                      {deviceActionLoading === d.id ? '...' : 'Conectar'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={deviceActionLoading === d.id}
-                      onClick={() => handleLogout(d)}
-                      style={{ padding: '4px 8px', fontSize: '12px' }}
-                    >
-                      Desconectar
-                    </button>
-                    <button
-                      type="button"
-                      disabled={deviceActionLoading === d.id}
-                      onClick={() => handleResetSession(d)}
-                      style={{ padding: '4px 8px', fontSize: '12px' }}
-                    >
-                      Reiniciar sesión
-                    </button>
-                    {d.status === 'QR' ? (
+                    <div className="actions" style={{ margin: 0, flexWrap: 'wrap', gap: '4px' }}>
                       <button
                         type="button"
                         disabled={deviceActionLoading === d.id}
-                        onClick={() => handleCopyPublicLink(d)}
+                        onClick={() => handleReconnect(d)}
                         style={{ padding: '4px 8px', fontSize: '12px' }}
                       >
-                        Copiar link QR
+                        {deviceActionLoading === d.id ? '...' : connectLabel}
                       </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={deviceActionLoading === d.id}
-                      onClick={() => handleDeleteDevice(d)}
-                      style={{ padding: '4px 8px', fontSize: '12px' }}
-                    >
-                      Eliminar
-                    </button>
+                      <button
+                        type="button"
+                        disabled={deviceActionLoading === d.id}
+                        onClick={() => handleLogout(d)}
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                      >
+                        Desconectar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deviceActionLoading === d.id}
+                        onClick={() => handleResetSession(d)}
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                      >
+                        Reset connection
+                      </button>
+                      {d.status === 'QR' ? (
+                        <button
+                          type="button"
+                          disabled={deviceActionLoading === d.id}
+                          onClick={() => handleCopyPublicLink(d)}
+                          style={{ padding: '4px 8px', fontSize: '12px' }}
+                        >
+                          Copiar link QR
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={deviceActionLoading === d.id}
+                        onClick={() => handleDeleteDevice(d)}
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                    <div style={{ width: '100%', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 4, paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>
+                      <input
+                        value={pingPhoneByDevice[d.id] ?? ''}
+                        onChange={(e) => setPingPhoneByDevice((prev) => ({ ...prev, [d.id]: e.target.value }))}
+                        placeholder="521XXXXXXXXXX"
+                        style={{ minWidth: 140, padding: '4px 8px', fontSize: '12px' }}
+                      />
+                      <button
+                        type="button"
+                        disabled={d.status !== 'ONLINE' || pingLoadingDeviceId === d.id}
+                        onClick={() => handlePing(d)}
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                      >
+                        {pingLoadingDeviceId === d.id ? '...' : 'Enviar ping'}
+                      </button>
+                      {d.status !== 'ONLINE' && (
+                        <span className="muted" style={{ fontSize: '12px' }}>Dispositivo debe estar ONLINE para ping</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

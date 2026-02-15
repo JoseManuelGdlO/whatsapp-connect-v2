@@ -206,7 +206,7 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
                   onClick={() => handleConnect(d)}
                   style={{ padding: '4px 8px', fontSize: '12px' }}
                 >
-                  Conectar
+                  {(d.status === 'OFFLINE' || d.status === 'ERROR') ? 'Reconectar' : 'Conectar'}
                 </button>
                 <button
                   type="button"
@@ -220,7 +220,7 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
                   onClick={() => handleResetSession(d)}
                   style={{ padding: '4px 8px', fontSize: '12px' }}
                 >
-                  Reiniciar sesión
+                  Reset connection
                 </button>
                 <button
                   type="button"
@@ -253,13 +253,13 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
               disabled={connecting}
               onClick={() => handleConnect(selectedDevice)}
             >
-              {connecting ? 'Conectando...' : 'Conectar'}
+              {connecting ? 'Conectando...' : (selectedDevice.status === 'OFFLINE' || selectedDevice.status === 'ERROR') ? 'Reconectar' : 'Conectar'}
             </button>
             <button type="button" onClick={() => handleDisconnect(selectedDevice.id)}>
               Desconectar
             </button>
             <button type="button" onClick={() => handleResetSession(selectedDevice)}>
-              Reiniciar sesión
+              Reset connection
             </button>
             {selectedDevice.status === 'QR' ? (
               <button
@@ -292,7 +292,7 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
             <div className="error" style={{ marginTop: 8 }}>
               <strong>Error:</strong> {selectedDevice.lastError}
               <br />
-              <small>Prueba &quot;Reiniciar sesión&quot; y luego &quot;Conectar&quot;.</small>
+              <small>Prueba &quot;Reset connection&quot; y luego &quot;Conectar&quot;.</small>
             </div>
           ) : null}
 

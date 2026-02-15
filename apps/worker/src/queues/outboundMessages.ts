@@ -155,7 +155,10 @@ export function startOutboundMessagesWorker() {
 
       try {
         const sendStartTime = Date.now();
+        await sock.sendPresenceUpdate('composing', to);
+        await new Promise((r) => setTimeout(r, 1500));
         const sent = await sock.sendMessage(to, { text });
+        await sock.sendPresenceUpdate('paused', to).catch(() => {});
         const sendDuration = Date.now() - sendStartTime;
         const providerMessageId = sent?.key?.id ?? null;
 
