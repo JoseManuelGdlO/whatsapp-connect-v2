@@ -146,8 +146,9 @@ export async function loadAuthState(deviceId: string): Promise<{
   /**
    * Clear session and sender-key entries for given JIDs in the in-memory keysData
    * used by the socket. Call this when we get "No matching sessions" so the next
-   * message from that contact triggers a fresh key exchange. Must be used together
-   * with clearSessionsForJids(deviceId, jids) to persist the same changes to DB.
+   * message from that contact triggers a fresh key exchange. After calling this,
+   * call saveImmediate() to persist the current state to DB (do not use
+   * clearSessionsForJids here, as it reads from DB and can overwrite newer keys).
    */
   const clearSenderSessionsInMemory = (jids: string[]): void => {
     const userParts = jids

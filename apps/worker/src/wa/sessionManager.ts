@@ -2,7 +2,7 @@ import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion } from '@whis
 import type { WASocket, proto } from '@whiskeysockets/baileys';
 
 import { prisma } from '../lib/prisma.js';
-import { loadAuthState, clearSessionsForJids } from './authStateDb.js';
+import { loadAuthState } from './authStateDb.js';
 import { handleMessagesUpsert } from './inbound.js';
 import { createLogger } from '@wc/logger';
 
@@ -314,7 +314,6 @@ export class SessionManager {
             const jids = [remoteJid, senderPn].filter(Boolean) as string[];
             try {
               clearSenderSessionsInMemory(jids);
-              await clearSessionsForJids(deviceId, jids);
               if ((save as any).immediate) {
                 await (save as any).immediate();
               }
