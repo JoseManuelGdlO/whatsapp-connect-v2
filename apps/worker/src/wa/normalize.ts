@@ -52,17 +52,17 @@ export type NormalizedInboundMessage = {
 
 /**
  * Resolve the canonical "from" JID for replying.
- * When the contact is saved, WhatsApp may send remoteJid as @lid (Linked ID).
- * We prefer participant (group sender) or senderPn (1:1 phone JID) so the bot
- * always gets the same reply-to address (number@s.whatsapp.net) and responds
- * to everyone regardless of whether they're in the client's contacts.
+ * - Groups: use participant (sender in group).
+ * - 1:1 with LID: use remoteJid (e.g. xxx@lid) so the reply goes to the same chat and
+ *   clears "Esperando el mensaje"; using senderPn would send to number@s.whatsapp.net
+ *   and the LID conversation would not get the reply.
+ * - Else: senderPn or remoteJid.
  */
 function resolveFromJid(key: proto.IMessageKey | undefined): string {
   if (!key) return '';
   const k = key as { participant?: string; senderPn?: string; remoteJid?: string };
-  // participant = sender in groups; sometimes set in 1:1 LID chats
   if (k.participant) return k.participant;
-  // senderPn = phone JID when chat is keyed by LID (saved contact)
+  if (k.remoteJid && k.remoteJid.endsWith('@lid')) return k.remoteJid;
   if (k.senderPn) return k.senderPn;
   return k.remoteJid ?? '';
 }
