@@ -66,4 +66,4 @@ WhatsApp muestra ese texto al usuario cuando el negocio **no responde** (o no ha
 - **Cola cargada**: muchos mensajes en `outbound_messages` o Redis lento retrasan el envío.
 - **Sin respuesta**: el webhook no llama al API para enviar mensaje (bot apagado, error, etc.).
 
-El worker mitiga esto: marca el mensaje como leído, envía presencia "escribiendo..." al recibir el mensaje y de nuevo justo antes de enviar la respuesta, para que el usuario vea actividad en lugar de "esperando el mensaje".
+El worker mitiga esto: marca el mensaje como leído, envía presencia "escribiendo..." **al recibir el mensaje** (para que el usuario vea actividad de inmediato) y de nuevo justo antes de enviar la respuesta. Si el bot no responde, la presencia "escribiendo..." se limpia automáticamente a los ~25 s. Opcionalmente puedes afinar la duración de "escribiendo..." antes del envío con `WORKER_COMPOSING_BEFORE_SEND_MS` (por defecto 1500 ms).

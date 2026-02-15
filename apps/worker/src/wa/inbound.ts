@@ -63,6 +63,22 @@ export async function handleMessagesUpsert(params: {
       }).catch(() => {});
     }
 
+    // Send "typing" presence so user sees "escribiendo..." immediately (reduces "Esperando el mensaje")
+    const remoteJid = key.remoteJid;
+    params.sock.sendPresenceUpdate('composing', remoteJid).catch((err) => {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.warn('Failed to send composing presence on inbound', errorMsg, {
+        deviceId: params.deviceId,
+        tenantId: device.tenantId,
+        metadata: { messageId: key.id, remoteJid, error: errorMsg }
+      }).catch(() => {});
+    });
+    // Clear "typing" after a while if the bot never replies (avoid leaving "escribiendo..." forever)
+    const INBOUND_COMPOSING_PAUSE_AFTER_MS = 25_000;
+    setTimeout(() => {
+      params.sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
+    }, INBOUND_COMPOSING_PAUSE_AFTER_MS);
+
     const normalized = normalizeInboundMessage({
       message: msg,
       deviceJid: params.sock.user?.id ?? null

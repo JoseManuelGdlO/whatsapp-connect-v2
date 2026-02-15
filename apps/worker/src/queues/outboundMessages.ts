@@ -7,6 +7,11 @@ import { createLogger } from '@wc/logger';
 
 const logger = createLogger(prisma, 'worker');
 
+/** Delay (ms) to show "composing" before sending the message. Configurable via env for UX tuning. */
+const COMPOSING_BEFORE_SEND_MS = typeof process.env.WORKER_COMPOSING_BEFORE_SEND_MS !== 'undefined'
+  ? Math.max(0, parseInt(process.env.WORKER_COMPOSING_BEFORE_SEND_MS, 10) || 1500)
+  : 1500;
+
 type OutboundJob = { outboundMessageId: string };
 
 export function startOutboundMessagesWorker() {
@@ -156,7 +161,7 @@ export function startOutboundMessagesWorker() {
       try {
         const sendStartTime = Date.now();
         await sock.sendPresenceUpdate('composing', to);
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, COMPOSING_BEFORE_SEND_MS));
         const sent = await sock.sendMessage(to, { text });
         await sock.sendPresenceUpdate('paused', to).catch(() => {});
         const sendDuration = Date.now() - sendStartTime;
