@@ -157,12 +157,15 @@ export async function loadAuthState(deviceId: string): Promise<{
       .filter((u) => u.length > 0);
     if (userParts.length === 0) return;
 
+    const matchesSessionId = (id: string, userPart: string) =>
+      id === userPart || id.startsWith(userPart + ':') || id.startsWith(userPart + '.');
+
     for (const keyType of ['session', 'sessions']) {
       const bucket = keysData[keyType];
       if (!bucket || typeof bucket !== 'object') continue;
       for (const userPart of userParts) {
         for (const id of Object.keys(bucket)) {
-          if (id === userPart || id.startsWith(userPart + ':')) {
+          if (matchesSessionId(id, userPart)) {
             delete bucket[id];
           }
         }
@@ -227,12 +230,15 @@ export async function clearSessionsForJids(deviceId: string, jids: string[]): Pr
   const keysData = parsed.keysData ?? {};
   let changed = false;
 
+  const matchesSessionId = (id: string, userPart: string) =>
+    id === userPart || id.startsWith(userPart + ':') || id.startsWith(userPart + '.');
+
   for (const keyType of ['session', 'sessions']) {
     const bucket = keysData[keyType];
     if (!bucket || typeof bucket !== 'object') continue;
     for (const userPart of userParts) {
       for (const id of Object.keys(bucket)) {
-        if (id === userPart || id.startsWith(userPart + ':')) {
+        if (matchesSessionId(id, userPart)) {
           delete bucket[id];
           changed = true;
         }
