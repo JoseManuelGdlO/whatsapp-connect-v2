@@ -14,13 +14,12 @@ type SessionEntry = {
   closing: boolean;
 };
 
-/** Debounce clear per (device, sender) so we don't clear the same sender too often, but different senders can be cleared. */
+/** Debounce clear+reconnect per device so we don't disconnect constantly (breaks replies for everyone). */
 const CLEAR_RECONNECT_DEBOUNCE_MS = 10 * 60 * 1000; // 10 minutes
 
 export class SessionManager {
   private sessions = new Map<string, SessionEntry>();
   private cachedVersion: [number, number, number] | null = null;
-  /** Key: `${deviceId}:${senderKey}` (senderKey = senderPn ?? remoteJid) */
   private lastClearReconnectAt = new Map<string, number>();
 
   private async getVersion(): Promise<[number, number, number] | undefined> {
@@ -241,8 +240,7 @@ export class SessionManager {
                             errorMessage.includes('SessionError') ||
                             errorMessage.includes('No matching sessions') ||
                             errorMessage.includes('message counter') ||
-                            errorMessage.includes('Failed to decrypt message') ||
-                            errorMessage.includes('Bad MAC');
+                            errorMessage.includes('Failed to decrypt message');
       
       if (isSessionError) {
         const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
@@ -303,18 +301,16 @@ export class SessionManager {
         });
         // If we received a stub "No matching sessions", clear that sender's keys in memory and persist to DB
         if (upsertResult?.clearSenderAndReconnect) {
-          const { remoteJid, senderPn } = upsertResult.clearSenderAndReconnect;
-          const senderKey = senderPn ?? remoteJid;
-          const debounceKey = `${deviceId}:${senderKey}`;
           const now = Date.now();
-          const last = this.lastClearReconnectAt.get(debounceKey) ?? 0;
+          const last = this.lastClearReconnectAt.get(deviceId) ?? 0;
           if (now - last < CLEAR_RECONNECT_DEBOUNCE_MS) {
-            await logger.warn('Skipping clear sender sessions (debounced for this sender)', '', {
+            await logger.warn('Skipping clear sender sessions (debounced)', '', {
               deviceId,
-              metadata: { remoteJid, senderPn, nextAllowedInSec: Math.ceil((CLEAR_RECONNECT_DEBOUNCE_MS - (now - last)) / 1000) }
+              metadata: { remoteJid: upsertResult.clearSenderAndReconnect.remoteJid, nextAllowedInSec: Math.ceil((CLEAR_RECONNECT_DEBOUNCE_MS - (now - last)) / 1000) }
             }).catch(() => {});
           } else {
-            this.lastClearReconnectAt.set(debounceKey, now);
+            this.lastClearReconnectAt.set(deviceId, now);
+            const { remoteJid, senderPn } = upsertResult.clearSenderAndReconnect;
             try {
               clearSenderSessionsInMemory(remoteJid, senderPn ?? null);
               if ((save as any).immediate) {
