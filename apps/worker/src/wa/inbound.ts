@@ -109,9 +109,12 @@ export async function handleMessagesUpsert(params: {
     }
     if (normalized.content.type === 'stub') {
       const stubText = normalized.content.text ?? '';
-      const isNoMatchingSessions = /no matching sessions found for message/i.test(stubText);
+      const isDecryptionFailure =
+        /no matching sessions found for message/i.test(stubText) ||
+        /bad mac/i.test(stubText) ||
+        /failed to decrypt message/i.test(stubText);
 
-      if (isNoMatchingSessions && key.remoteJid) {
+      if (isDecryptionFailure && key.remoteJid) {
         const keyAny = key as { senderPn?: string };
         result = {
           clearSenderAndReconnect: {
@@ -119,7 +122,7 @@ export async function handleMessagesUpsert(params: {
             senderPn: keyAny.senderPn
           }
         };
-        await logger.warn('Stub: No matching sessions - will clear sender session and reconnect', '', {
+        await logger.warn('Stub: Decryption failed (no matching sessions / Bad MAC) - clearing sender session', '', {
           deviceId: params.deviceId,
           tenantId: device.tenantId,
           metadata: { remoteJid: key.remoteJid, senderPn: keyAny.senderPn }

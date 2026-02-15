@@ -46,7 +46,7 @@ export async function loadAuthState(deviceId: string): Promise<{
   state: AuthenticationState;
   save: () => Promise<void>;
   clearCorruptedSessions: () => Promise<void>;
-  clearSenderSessionsInMemory: (jids: string[]) => void;
+  clearSenderSessionsInMemory: (jid: string | null, from: string | null) => void;
 }> {
   const existing = await prisma.waSession.findUnique({ where: { deviceId } });
 
@@ -144,54 +144,52 @@ export async function loadAuthState(deviceId: string): Promise<{
   };
 
   /**
-   * Clear session and sender-key entries for given JIDs in the in-memory keysData
-   * used by the socket. Call this when we get "No matching sessions" so the next
-   * message from that contact triggers a fresh key exchange. After calling this,
-   * call saveImmediate() to persist the current state to DB (do not use
-   * clearSessionsForJids here, as it reads from DB and can overwrite newer keys).
+   * Clear session and sender-key entries in the in-memory keysData. First tries by
+   * JID (remoteJid, e.g. LID), then by from (senderPn, e.g. phone). Call this when
+   * decryption fails so the next message triggers a fresh key exchange. After this,
+   * call saveImmediate() to persist (do not use clearSessionsForJids here).
    */
-  const clearSenderSessionsInMemory = (jids: string[]): void => {
-    const userParts = jids
-      .filter(Boolean)
-      .map((jid) => String(jid).split('@')[0])
-      .filter((u) => u.length > 0);
-    if (userParts.length === 0) return;
-
+  const clearSenderSessionsInMemory = (jid: string | null, from: string | null): void => {
     const matchesSessionId = (id: string, userPart: string) =>
       id === userPart || id.startsWith(userPart + ':') || id.startsWith(userPart + '.');
 
-    for (const keyType of ['session', 'sessions']) {
-      const bucket = keysData[keyType];
-      if (!bucket || typeof bucket !== 'object') continue;
-      for (const userPart of userParts) {
+    const clearForUserPart = (userPart: string) => {
+      for (const keyType of ['session', 'sessions']) {
+        const bucket = keysData[keyType];
+        if (!bucket || typeof bucket !== 'object') continue;
         for (const id of Object.keys(bucket)) {
           if (matchesSessionId(id, userPart)) {
             delete bucket[id];
           }
         }
       }
-    }
-
-    const senderKeyBucket = keysData['sender-key'];
-    if (senderKeyBucket && typeof senderKeyBucket === 'object') {
-      for (const userPart of userParts) {
+      const senderKeyBucket = keysData['sender-key'];
+      if (senderKeyBucket && typeof senderKeyBucket === 'object') {
         for (const keyStr of Object.keys(senderKeyBucket)) {
           if (keyStr.includes(userPart)) {
             delete senderKeyBucket[keyStr];
           }
         }
       }
-    }
-
-    const senderKeyMemory = keysData['sender-key-memory'];
-    if (senderKeyMemory && typeof senderKeyMemory === 'object') {
-      for (const userPart of userParts) {
+      const senderKeyMemory = keysData['sender-key-memory'];
+      if (senderKeyMemory && typeof senderKeyMemory === 'object') {
         for (const keyStr of Object.keys(senderKeyMemory)) {
           if (keyStr.includes(userPart)) {
             delete senderKeyMemory[keyStr];
           }
         }
       }
+    };
+
+    // Primero por JID (remoteJid, ej. 67229240574002@lid)
+    const jidUserPart = jid ? String(jid).split('@')[0] : '';
+    if (jidUserPart.length > 0) {
+      clearForUserPart(jidUserPart);
+    }
+    // Luego por from (senderPn, ej. 5216183610698@s.whatsapp.net) si es distinto
+    const fromUserPart = from ? String(from).split('@')[0] : '';
+    if (fromUserPart.length > 0 && fromUserPart !== jidUserPart) {
+      clearForUserPart(fromUserPart);
     }
   };
 

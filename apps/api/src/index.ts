@@ -606,7 +606,8 @@ app.get(
     for (const ev of events) {
       const raw = ev.rawJson as { key?: { remoteJid?: string } } | null;
       const norm = ev.normalizedJson as { from?: string } | null;
-      const remoteJid = raw?.key?.remoteJid ?? norm?.from ?? '';
+      // Prefer normalized "from" (canonical JID) so the same contact is one conversation
+      const remoteJid = norm?.from ?? raw?.key?.remoteJid ?? '';
       if (!remoteJid) continue;
       const existing = byJid.get(remoteJid);
       if (!existing) {
@@ -677,8 +678,9 @@ app.get(
     for (const ev of events) {
       const raw = ev.rawJson as { key?: { remoteJid?: string }; message?: { conversation?: string; extendedTextMessage?: { text?: string }; imageMessage?: { caption?: string }; videoMessage?: { caption?: string } } } | null;
       const norm = ev.normalizedJson as { content?: { text?: string | null }; from?: string } | null;
-      const jid = raw?.key?.remoteJid ?? norm?.from ?? '';
-      if (jid !== remoteJid) continue;
+      const matchesConversation =
+        (norm?.from && norm.from === remoteJid) || (raw?.key?.remoteJid === remoteJid);
+      if (!matchesConversation) continue;
       const text =
         norm?.content?.text ??
         raw?.message?.conversation ??

@@ -1,5 +1,4 @@
 import type { proto } from '@whiskeysockets/baileys';
-import { getChatId, jidNormalizedUser, isJidBroadcast, isJidGroup } from '@whiskeysockets/baileys';
 
 function getText(msg: proto.IMessage | undefined): string | null {
   if (!msg) return null;
@@ -42,64 +41,54 @@ export type NormalizedInboundMessage = {
   kind: 'inbound_message';
   messageId: string;
   from: string;
-  /** JID completo al que el bot debe responder. Usar este para enviar y como clave de hilo estable (mismo contacto = mismo replyToJid cuando hay senderPn). */
-  replyToJid: string;
-  /** JID remoto del mensaje (p. ej. número@s.whatsapp.net o xxx@lid). */
-  remoteJid: string;
-  /** Número de teléfono en JID cuando WhatsApp lo envía; usar como clave estable para el mismo contacto. */
-  senderPn: string | null;
   to: string | null;
   timestamp: number | null;
   content: {
-    type: 'text' | 'media' | 'stub' | 'unknown';
+    type: 'text' | 'media' | 'unknown';
     text: string | null;
     media: any | null;
   };
 };
+
+/**
+ * Resolve the canonical "from" JID for replying.
+ * When the contact is saved, WhatsApp may send remoteJid as @lid (Linked ID).
+ * We prefer participant (group sender) or senderPn (1:1 phone JID) so the bot
+ * always gets the same reply-to address (number@s.whatsapp.net) and responds
+ * to everyone regardless of whether they're in the client's contacts.
+ */
+function resolveFromJid(key: proto.IMessageKey | undefined): string {
+  if (!key) return '';
+  const k = key as { participant?: string; senderPn?: string; remoteJid?: string };
+  // participant = sender in groups; sometimes set in 1:1 LID chats
+  if (k.participant) return k.participant;
+  // senderPn = phone JID when chat is keyed by LID (saved contact)
+  if (k.senderPn) return k.senderPn;
+  return k.remoteJid ?? '';
+}
 
 export function normalizeInboundMessage(params: {
   message: proto.IWebMessageInfo;
   deviceJid: string | null;
 }): NormalizedInboundMessage {
   const m = params.message;
-  const key = m.key;
-  const messageId = key?.id ?? '';
-
-  // Reply-to JID: use getChatId so broadcast uses participant; for 1:1 prefer senderPn (phone) over LID
-  const chatId = key ? getChatId(key) : '';
-  const keyAny = key as { senderPn?: string } | undefined;
-  const isOneToOne = chatId && !isJidGroup(chatId) && !isJidBroadcast(chatId);
-  const replyToJid = (isOneToOne && keyAny?.senderPn ? keyAny.senderPn : chatId) || key?.remoteJid || '';
-  const from = (jidNormalizedUser(replyToJid || '') || replyToJid || key?.remoteJid) ?? '';
-  const remoteJid = key?.remoteJid ?? '';
-  const senderPn = keyAny?.senderPn ?? null;
-
+  const messageId = m.key?.id ?? '';
+  const from = resolveFromJid(m.key);
   const to = params.deviceJid;
   const timestamp = typeof m.messageTimestamp === 'number' ? m.messageTimestamp : (m.messageTimestamp as any)?.toNumber?.() ?? null;
 
-  let text = getText(m.message ?? undefined);
+  const text = getText(m.message ?? undefined);
   const media = getMediaMeta(m.message ?? undefined);
 
-  // Stub messages (e.g. "No session record", group join/leave) have no conversation/text
-  const msgAny = m as { messageStubType?: number; messageStubParameters?: string[] };
-  const isStub = text == null && media == null && (msgAny.messageStubType != null || (msgAny.messageStubParameters?.length ?? 0) > 0);
-  if (isStub && msgAny.messageStubParameters?.length) {
-    text = msgAny.messageStubParameters.join(' ').trim() || null;
-  }
-
-  const type: 'text' | 'media' | 'stub' | 'unknown' =
-    text && !isStub ? 'text' : media ? 'media' : isStub ? 'stub' : 'unknown';
+  const type: 'text' | 'media' | 'unknown' = text ? 'text' : media ? 'media' : 'unknown';
 
   return {
     kind: 'inbound_message',
     messageId,
     from,
-    replyToJid,
-    remoteJid,
-    senderPn,
     to,
     timestamp,
-    content: { type, text: text || null, media }
+    content: { type, text, media }
   };
 }
 

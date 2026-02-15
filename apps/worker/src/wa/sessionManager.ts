@@ -39,7 +39,7 @@ export class SessionManager {
     let sock: WASocket;
     let save: () => Promise<void>;
     let clearCorruptedSessions: () => Promise<void>;
-    let clearSenderSessionsInMemory: (jids: string[]) => void;
+    let clearSenderSessionsInMemory: (jid: string | null, from: string | null) => void;
 
     try {
       await prisma.device.update({
@@ -311,15 +311,14 @@ export class SessionManager {
           } else {
             this.lastClearReconnectAt.set(deviceId, now);
             const { remoteJid, senderPn } = upsertResult.clearSenderAndReconnect;
-            const jids = [remoteJid, senderPn].filter(Boolean) as string[];
             try {
-              clearSenderSessionsInMemory(jids);
+              clearSenderSessionsInMemory(remoteJid, senderPn ?? null);
               if ((save as any).immediate) {
                 await (save as any).immediate();
               }
               await logger.info('Cleared session keys for sender (memory + DB)', {
                 deviceId,
-                metadata: { remoteJid, senderPn, jids }
+                metadata: { remoteJid, senderPn }
               }).catch(() => {});
             } catch (clearErr) {
               await logger.error('Failed to clear sender sessions', clearErr instanceof Error ? clearErr : new Error(String(clearErr)), {
