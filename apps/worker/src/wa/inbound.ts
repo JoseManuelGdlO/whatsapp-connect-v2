@@ -10,6 +10,9 @@ import { createLogger } from '@wc/logger';
 const webhookQueue = new Queue('webhook_dispatch', { connection: redis });
 const logger = createLogger(prisma, 'worker');
 
+/** Baileys sets this stub type when decryption fails (Bad MAC / No matching sessions). */
+const STUB_TYPE_CIPHERTEXT = 2;
+
 export type MessagesUpsertResult = {
   clearSenderAndReconnect?: { remoteJid: string; senderPn?: string };
 };
@@ -109,7 +112,9 @@ export async function handleMessagesUpsert(params: {
     }
     if (normalized.content.type === 'stub') {
       const stubText = normalized.content.text ?? '';
+      const msgRaw = msg as { messageStubType?: number };
       const isDecryptionFailure =
+        msgRaw.messageStubType === STUB_TYPE_CIPHERTEXT ||
         /no matching sessions found for message/i.test(stubText) ||
         /bad mac/i.test(stubText) ||
         /failed to decrypt message/i.test(stubText);

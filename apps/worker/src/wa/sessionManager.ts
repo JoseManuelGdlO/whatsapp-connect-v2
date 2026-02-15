@@ -240,7 +240,8 @@ export class SessionManager {
                             errorMessage.includes('SessionError') ||
                             errorMessage.includes('No matching sessions') ||
                             errorMessage.includes('message counter') ||
-                            errorMessage.includes('Failed to decrypt message');
+                            errorMessage.includes('Failed to decrypt message') ||
+                            errorMessage.includes('Bad MAC');
       
       if (isSessionError) {
         const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);

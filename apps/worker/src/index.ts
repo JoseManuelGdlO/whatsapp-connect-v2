@@ -53,6 +53,7 @@ process.on('unhandledRejection', async (reason: any, promise: Promise<any>) => {
   const isSessionError = errorMessage.includes('Over 2000 messages into the future') ||
                         errorMessage.includes('SessionError') ||
                         errorMessage.includes('Failed to decrypt message') ||
+                        errorMessage.includes('Bad MAC') ||
                         errorStack.includes('session_cipher.js');
   
   if (isSessionError) {
