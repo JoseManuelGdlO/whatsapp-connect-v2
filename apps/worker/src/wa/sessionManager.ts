@@ -39,6 +39,7 @@ export class SessionManager {
     let sock: WASocket;
     let save: () => Promise<void>;
     let clearCorruptedSessions: () => Promise<void>;
+    let clearSenderSessionsInMemory: (jids: string[]) => void;
 
     try {
       await prisma.device.update({
@@ -49,6 +50,7 @@ export class SessionManager {
       const authState = await loadAuthState(deviceId);
       save = authState.save;
       clearCorruptedSessions = authState.clearCorruptedSessions;
+      clearSenderSessionsInMemory = authState.clearSenderSessionsInMemory;
 
       // Implement getMessage to help Baileys recover from sync errors
       // This function allows Baileys to retrieve previous messages when validating message sequence
@@ -297,7 +299,7 @@ export class SessionManager {
         await save().catch(() => {
           // Ignore save errors - non-critical
         });
-        // If we received a stub "No matching sessions", clear that sender's keys in BD only (no reset/reconnect)
+        // If we received a stub "No matching sessions", clear that sender's keys in memory and persist to DB
         if (upsertResult?.clearSenderAndReconnect) {
           const now = Date.now();
           const last = this.lastClearReconnectAt.get(deviceId) ?? 0;
@@ -311,8 +313,12 @@ export class SessionManager {
             const { remoteJid, senderPn } = upsertResult.clearSenderAndReconnect;
             const jids = [remoteJid, senderPn].filter(Boolean) as string[];
             try {
+              clearSenderSessionsInMemory(jids);
               await clearSessionsForJids(deviceId, jids);
-              await logger.info('Cleared session keys for sender (BD only)', {
+              if ((save as any).immediate) {
+                await (save as any).immediate();
+              }
+              await logger.info('Cleared session keys for sender (memory + DB)', {
                 deviceId,
                 metadata: { remoteJid, senderPn, jids }
               }).catch(() => {});

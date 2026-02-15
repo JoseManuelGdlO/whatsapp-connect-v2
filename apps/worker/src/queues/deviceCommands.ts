@@ -57,6 +57,56 @@ export function startDeviceCommandsWorker() {
   });
 
   logger.info('[worker] device_commands worker started').catch(() => {});
+
+  // After deploy: reconnect all devices that have an initialized session so the user
+  // doesn't have to click "Conectar" on each one.
+  const reconnectDelayMs = Number(process.env.WORKER_RECONNECT_ALL_DELAY_MS ?? 5000);
+  const staggerMs = Number(process.env.WORKER_RECONNECT_STAGGER_MS ?? 800);
+  setTimeout(() => void reconnectAllInitializedDevices(staggerMs), reconnectDelayMs);
+
   return worker;
+}
+
+/**
+ * Reconnect all devices that have a stored session (were linked at least once).
+ * Called on worker startup so after a deploy all WhatsApp sessions come back without
+ * manually clicking "Conectar" on each device.
+ */
+export async function reconnectAllInitializedDevices(staggerMs: number = 800): Promise<void> {
+  try {
+    const devices = await prisma.device.findMany({
+      where: { session: { isNot: null } },
+      select: { id: true, label: true }
+    });
+    if (devices.length === 0) {
+      await logger.info('[worker] No devices with session to reconnect', {}).catch(() => {});
+      return;
+    }
+    await logger.info(`[worker] Reconnecting ${devices.length} device(s) with session`, {
+      metadata: { count: devices.length, staggerMs }
+    }).catch(() => {});
+
+    for (let i = 0; i < devices.length; i++) {
+      const { id } = devices[i];
+      if (sessionManager.get(id)) continue; // already connected
+      try {
+        await sessionManager.connect(id);
+      } catch (err) {
+        await logger
+          .error(`[worker] Failed to reconnect device ${id}`, err instanceof Error ? err : new Error(String(err)), {
+            deviceId: id,
+            metadata: { label: devices[i].label }
+          })
+          .catch(() => {});
+      }
+      if (i < devices.length - 1 && staggerMs > 0) {
+        await new Promise((r) => setTimeout(r, staggerMs));
+      }
+    }
+  } catch (err) {
+    await logger
+      .error('[worker] reconnectAllInitializedDevices failed', err instanceof Error ? err : new Error(String(err)), {})
+      .catch(() => {});
+  }
 }
 

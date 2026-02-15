@@ -42,7 +42,7 @@ npm run dev
 ## Documentación
 - Aprobación: `docs/00-APROBACION.md`
 - API: `apps/api/README.md`
-- Worker: `apps/worker/README.md`
+- Worker: `apps/worker/README.md` (incluye requisito de `WA_AUTH_ENC_KEY_B64` en despliegue)
 - Web: `apps/web/README.md`
 
 ## Integración con bot externo (responder por WhatsApp)

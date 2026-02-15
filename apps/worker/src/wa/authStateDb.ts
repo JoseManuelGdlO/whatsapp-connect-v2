@@ -46,6 +46,7 @@ export async function loadAuthState(deviceId: string): Promise<{
   state: AuthenticationState;
   save: () => Promise<void>;
   clearCorruptedSessions: () => Promise<void>;
+  clearSenderSessionsInMemory: (jids: string[]) => void;
 }> {
   const existing = await prisma.waSession.findUnique({ where: { deviceId } });
 
@@ -128,8 +129,8 @@ export async function loadAuthState(deviceId: string): Promise<{
   const clearCorruptedSessions = async () => {
     try {
       // Clear session-related keys that might be corrupted
-      // This includes 'sessions', 'sender-key', and 'sender-key-memory'
-      const keysToClear = ['sessions', 'sender-key', 'sender-key-memory'];
+      // Baileys uses 'session' (singular), 'sender-key', and 'sender-key-memory'
+      const keysToClear = ['session', 'sender-key', 'sender-key-memory'];
       for (const keyType of keysToClear) {
         if (keysData[keyType]) {
           delete keysData[keyType];
@@ -142,13 +143,61 @@ export async function loadAuthState(deviceId: string): Promise<{
     }
   };
 
+  /**
+   * Clear session and sender-key entries for given JIDs in the in-memory keysData
+   * used by the socket. Call this when we get "No matching sessions" so the next
+   * message from that contact triggers a fresh key exchange. Must be used together
+   * with clearSessionsForJids(deviceId, jids) to persist the same changes to DB.
+   */
+  const clearSenderSessionsInMemory = (jids: string[]): void => {
+    const userParts = jids
+      .filter(Boolean)
+      .map((jid) => String(jid).split('@')[0])
+      .filter((u) => u.length > 0);
+    if (userParts.length === 0) return;
+
+    for (const keyType of ['session', 'sessions']) {
+      const bucket = keysData[keyType];
+      if (!bucket || typeof bucket !== 'object') continue;
+      for (const userPart of userParts) {
+        for (const id of Object.keys(bucket)) {
+          if (id === userPart || id.startsWith(userPart + ':')) {
+            delete bucket[id];
+          }
+        }
+      }
+    }
+
+    const senderKeyBucket = keysData['sender-key'];
+    if (senderKeyBucket && typeof senderKeyBucket === 'object') {
+      for (const userPart of userParts) {
+        for (const keyStr of Object.keys(senderKeyBucket)) {
+          if (keyStr.includes(userPart)) {
+            delete senderKeyBucket[keyStr];
+          }
+        }
+      }
+    }
+
+    const senderKeyMemory = keysData['sender-key-memory'];
+    if (senderKeyMemory && typeof senderKeyMemory === 'object') {
+      for (const userPart of userParts) {
+        for (const keyStr of Object.keys(senderKeyMemory)) {
+          if (keyStr.includes(userPart)) {
+            delete senderKeyMemory[keyStr];
+          }
+        }
+      }
+    }
+  };
+
   // Wrap save to provide both debounced and immediate versions
   const saveWrapper = async () => {
     await save();
   };
   (saveWrapper as any).immediate = saveImmediate;
 
-  return { state, save: saveWrapper, clearCorruptedSessions };
+  return { state, save: saveWrapper, clearCorruptedSessions, clearSenderSessionsInMemory };
 }
 
 /**

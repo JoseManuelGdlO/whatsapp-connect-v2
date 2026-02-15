@@ -76,30 +76,32 @@ export function ConversationsTrace({ token, tenantIdOverride }: { token: string;
   const selectedDevice = devices.find((d) => d.id === selectedDeviceId);
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <h3>Trace de conversaciones (por dispositivo)</h3>
-      <TenantSelector />
-      <p className="muted">Elige un dispositivo para ver sus conversaciones.</p>
+    <div className="conversationsTraceFull">
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 0 }}>
+        <h3>Trace de conversaciones (por dispositivo)</h3>
+        <TenantSelector />
+        <p className="muted">Elige un dispositivo para ver sus conversaciones.</p>
 
-      <label>
-        Dispositivo
-        <select
-          value={selectedDeviceId ?? ''}
-          onChange={(e) => setSelectedDeviceId(e.target.value || null)}
-          style={{ marginTop: 4 }}
-        >
-          <option value="">-- Seleccionar --</option>
-          {devices.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.label} ({d.status})
-            </option>
-          ))}
-        </select>
-      </label>
+        <label>
+          Dispositivo
+          <select
+            value={selectedDeviceId ?? ''}
+            onChange={(e) => setSelectedDeviceId(e.target.value || null)}
+            style={{ marginTop: 4 }}
+          >
+            <option value="">-- Seleccionar --</option>
+            {devices.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.label} ({d.status})
+              </option>
+            ))}
+          </select>
+        </label>
 
-      {msg && <div className="error">{msg}</div>}
+        {msg && <div className="error">{msg}</div>}
+      </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16, minHeight: 400 }}>
+      <div className="conversationsTraceChatGrid">
         <div className="chatSidebar" style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: 12, borderBottom: '1px solid #e2e8f0', fontWeight: 600 }}>
             Conversaciones {selectedDevice ? `· ${selectedDevice.label}` : ''}
@@ -133,11 +135,11 @@ export function ConversationsTrace({ token, tenantIdOverride }: { token: string;
           </div>
         </div>
 
-        <div className="chatPanel" style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: 12, borderBottom: '1px solid #e2e8f0', fontWeight: 600 }}>
+        <div className="chatPanel" style={{ border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ padding: 12, borderBottom: '1px solid #e2e8f0', fontWeight: 600, flexShrink: 0 }}>
             {selectedJid ? formatJidDisplay(selectedJid) : 'Selecciona una conversación'}
           </div>
-          <div className="chatThread" style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+          <div className="chatThread chatThreadScroll" style={{ flex: 1, overflow: 'auto', padding: 12, minHeight: 0 }}>
             {messagesLoading && <p className="muted">Cargando mensajes...</p>}
             {!messagesLoading && messages.length === 0 && selectedJid && <p className="muted">Sin mensajes</p>}
             {!messagesLoading &&

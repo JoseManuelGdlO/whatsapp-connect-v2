@@ -1,5 +1,16 @@
 # apps/worker — WA Engine + Jobs
 
+## Configuración crítica (despliegue)
+
+- **`WA_AUTH_ENC_KEY_B64`**: clave AES-256 (32 bytes en base64) para cifrar el estado de sesión WhatsApp en BD. **Debe ser idéntica en todos los procesos que comparten la misma base de datos** (workers, API si accede a `waSession`). Si una instancia usa una clave distinta, no podrá descifrar el estado guardado por otra y las sesiones fallarán con errores de descifrado ("No matching sessions") en todos los dispositivos.
+
+### Reconexión automática tras despliegue
+
+Al arrancar, el worker reconecta **todos los dispositivos que tienen sesión guardada** (estado ya vinculado), para no tener que ir dispositivo por dispositivo pulsando "Conectar" tras un deploy.
+
+- **`WORKER_RECONNECT_ALL_DELAY_MS`** (opcional): milisegundos de espera antes de empezar las reconexiones (por defecto 5000).
+- **`WORKER_RECONNECT_STAGGER_MS`** (opcional): milisegundos entre cada reconexión para no saturar (por defecto 800). Con ~20 dispositivos son unos 16 s en total.
+
 ## Responsabilidad
 - Mantener sesiones WhatsApp Web por `deviceId`
 - Emitir eventos entrantes (raw) y normalizarlos

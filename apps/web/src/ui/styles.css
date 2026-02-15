@@ -131,7 +131,46 @@ button:disabled { opacity: 0.7; cursor: not-allowed; }
   overflow: auto;
 }
 
-/* Trace / chat view (WhatsApp-like) */
+/* Trace / chat view (WhatsApp-like) — pantalla completa */
+.conversationsTraceFull {
+  width: 100vw;
+  position: relative;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
+  padding-left: 24px;
+  padding-right: 24px;
+  box-sizing: border-box;
+  min-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.conversationsTraceChatGrid {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  height: calc(100vh - 320px);
+  min-height: 400px;
+}
+
+.conversationsTraceChatGrid .chatSidebar,
+.conversationsTraceChatGrid .chatPanel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.conversationsTraceChatGrid .chatPanel > div:last-child {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
 .chatThread {
   display: flex;
   flex-direction: column;
@@ -139,8 +178,13 @@ button:disabled { opacity: 0.7; cursor: not-allowed; }
   align-items: flex-start;
 }
 
+.chatThreadScroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 .chatBubble {
-  max-width: 75%;
+  max-width: 85%;
   padding: 8px 12px;
   border-radius: 12px;
   font-size: 14px;
@@ -164,6 +208,8 @@ button:disabled { opacity: 0.7; cursor: not-allowed; }
 
 .chatBubbleText {
   margin-bottom: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .chatBubbleMeta {
