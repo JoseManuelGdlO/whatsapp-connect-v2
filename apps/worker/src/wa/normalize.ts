@@ -44,7 +44,7 @@ export type NormalizedInboundMessage = {
   to: string | null;
   timestamp: number | null;
   content: {
-    type: 'text' | 'media' | 'unknown';
+    type: 'text' | 'media' | 'unknown' | 'stub';
     text: string | null;
     media: any | null;
   };
@@ -79,8 +79,15 @@ export function normalizeInboundMessage(params: {
 
   const text = getText(m.message ?? undefined);
   const media = getMediaMeta(m.message ?? undefined);
+  const isStub = (m as { messageStubType?: number }).messageStubType != null;
 
-  const type: 'text' | 'media' | 'unknown' = text ? 'text' : media ? 'media' : 'unknown';
+  const type: 'text' | 'media' | 'unknown' | 'stub' = isStub
+    ? 'stub'
+    : text
+      ? 'text'
+      : media
+        ? 'media'
+        : 'unknown';
 
   return {
     kind: 'inbound_message',
