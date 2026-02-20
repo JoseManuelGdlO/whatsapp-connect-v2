@@ -45,21 +45,38 @@ setInterval(() => {
 
 // Handle uncaught exceptions (e.g. stream errors from undici/fetch when connection is closed)
 // These can occur when WhatsApp closes the connection mid-request (ECONNRESET, "terminated")
-// Log and exit so Docker/PM2 can restart the worker cleanly
+const BENIGN_NETWORK_PATTERNS = [
+  'terminated',
+  'other side closed',
+  'ECONNRESET',
+  'socket hang up',
+  'UND_ERR_SOCKET',
+  'ECONNREFUSED',
+  'ETIMEDOUT'
+];
 process.on('uncaughtException', (err: Error) => {
   const msg = err?.message ?? String(err);
   const cause = (err as any)?.cause;
   const causeMsg = cause?.message ?? (typeof cause === 'string' ? cause : '');
-  // Use console.error for critical exit - logger might not flush in time
+  const combined = `${msg} ${causeMsg}`.toLowerCase();
+  const isBenignNetwork = BENIGN_NETWORK_PATTERNS.some((p) => combined.includes(p.toLowerCase()));
+
   console.error('[worker] UncaughtException:', msg, causeMsg ? `(cause: ${causeMsg})` : '', err?.stack ?? '');
-  logger.error('UncaughtException - worker will exit', err instanceof Error ? err : new Error(String(err)), {
-    metadata: {
-      errorMessage: msg,
-      causeMessage: causeMsg,
-      note: 'Process exiting to allow container/PM2 restart.'
-    }
-  }).catch(() => {});
-  process.exit(1);
+
+  if (isBenignNetwork) {
+    logger
+      .error('UncaughtException (benign network - worker will continue)', err instanceof Error ? err : new Error(String(err)), {
+        metadata: { errorMessage: msg, causeMessage: causeMsg, note: 'WhatsApp closed connection mid-request. Sessions will reconnect.' }
+      })
+      .catch(() => {});
+  } else {
+    logger
+      .error('UncaughtException - worker will exit', err instanceof Error ? err : new Error(String(err)), {
+        metadata: { errorMessage: msg, causeMessage: causeMsg, note: 'Process exiting to allow container/PM2 restart.' }
+      })
+      .catch(() => {});
+    process.exit(1);
+  }
 });
 
 // Handle unhandled promise rejections that may come from libsignal/Baileys
