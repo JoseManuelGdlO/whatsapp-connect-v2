@@ -17,10 +17,16 @@ type SessionEntry = {
 /** Debounce clear+reconnect per device so we don't disconnect constantly (breaks replies for everyone). */
 const CLEAR_RECONNECT_DEBOUNCE_MS = 10 * 60 * 1000; // 10 minutes
 
+/** Exponential backoff for reconnects: avoid reconnect storms when WhatsApp closes connections. */
+const RECONNECT_INITIAL_DELAY_MS = 5000;
+const RECONNECT_MAX_DELAY_MS = 5 * 60 * 1000; // 5 minutes
+
 export class SessionManager {
   private sessions = new Map<string, SessionEntry>();
   private cachedVersion: [number, number, number] | null = null;
   private lastClearReconnectAt = new Map<string, number>();
+  /** Tracks reconnect attempts per device for exponential backoff. Reset when connection opens. */
+  private reconnectAttempts = new Map<string, number>();
 
   private async getVersion(): Promise<[number, number, number] | undefined> {
     if (this.cachedVersion) return this.cachedVersion;
@@ -116,10 +122,12 @@ export class SessionManager {
         auth: authState.state,
         printQRInTerminal: false,
         getMessage,
-        // Mark messages as read automatically to prevent sync issues
         markOnlineOnConnect: true,
-        // Increase sync timeout to handle slow connections
         syncFullHistory: false,
+        // Timeouts for slow/unstable connections (e.g. Docker, cloud)
+        defaultQueryTimeoutMs: 60000,
+        connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 30000,
         ...(version ? { version } : {})
       });
 
@@ -178,6 +186,7 @@ export class SessionManager {
         }
 
         if (connection === 'open') {
+          this.reconnectAttempts.set(deviceId, 0); // Reset backoff on successful connect
           await prisma.device.update({
             where: { id: deviceId },
             data: { status: 'ONLINE', qr: null, lastSeenAt: new Date(), lastError: null }
@@ -222,11 +231,17 @@ export class SessionManager {
           const current = this.sessions.get(deviceId);
           if (!current || current.closing) return;
 
-          // Basic reconnect (unless logged out)
           if (statusCode !== DisconnectReason.loggedOut) {
+            const attempts = this.reconnectAttempts.get(deviceId) ?? 0;
+            this.reconnectAttempts.set(deviceId, attempts + 1);
             this.sessions.delete(deviceId);
-            setTimeout(() => void this.connect(deviceId), 2000);
+            const delay = Math.min(
+              RECONNECT_INITIAL_DELAY_MS * Math.pow(2, attempts),
+              RECONNECT_MAX_DELAY_MS
+            );
+            setTimeout(() => void this.connect(deviceId), delay);
           } else {
+            this.reconnectAttempts.delete(deviceId);
             this.sessions.delete(deviceId);
           }
         }
@@ -385,6 +400,7 @@ export class SessionManager {
   }
 
   async disconnect(deviceId: string) {
+    this.reconnectAttempts.delete(deviceId);
     const entry = this.sessions.get(deviceId);
     if (!entry) return;
     entry.closing = true;

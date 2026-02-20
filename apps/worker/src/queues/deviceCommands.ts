@@ -72,7 +72,7 @@ export function startDeviceCommandsWorker() {
   // After deploy: reconnect all devices that have an initialized session so the user
   // doesn't have to click "Conectar" on each one.
   const reconnectDelayMs = Number(process.env.WORKER_RECONNECT_ALL_DELAY_MS ?? 5000);
-  const staggerMs = Number(process.env.WORKER_RECONNECT_STAGGER_MS ?? 800);
+  const staggerMs = Number(process.env.WORKER_RECONNECT_STAGGER_MS ?? 5000);
   setTimeout(() => void reconnectAllInitializedDevices(staggerMs), reconnectDelayMs);
 
   return worker;
@@ -83,7 +83,7 @@ export function startDeviceCommandsWorker() {
  * Called on worker startup so after a deploy all WhatsApp sessions come back without
  * manually clicking "Conectar" on each device.
  */
-export async function reconnectAllInitializedDevices(staggerMs: number = 800): Promise<void> {
+export async function reconnectAllInitializedDevices(staggerMs: number = 5000): Promise<void> {
   try {
     const devices = await prisma.device.findMany({
       where: { session: { isNot: null } },
