@@ -49,19 +49,28 @@ export function startWebhookDispatchWorker() {
       const signature = hmacSha256(delivery.endpoint.secret, `${timestamp}.${body}`);
 
       try {
-        const resp = await fetch(delivery.endpoint.url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-event-id': delivery.eventId,
-            'x-tenant-id': delivery.event.tenantId,
-            'x-device-id': delivery.event.deviceId,
-            'x-event-type': delivery.event.type,
-            'x-timestamp': timestamp,
-            'x-signature': signature
-          },
-          body
-        });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+
+        let resp;
+        try {
+          resp = await fetch(delivery.endpoint.url, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-event-id': delivery.eventId,
+              'x-tenant-id': delivery.event.tenantId,
+              'x-device-id': delivery.event.deviceId,
+              'x-event-type': delivery.event.type,
+              'x-timestamp': timestamp,
+              'x-signature': signature
+            },
+            body,
+            signal: controller.signal
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
 
         if (!resp.ok) {
           const errorText = await resp.text().catch(() => '');
@@ -82,13 +91,14 @@ export function startWebhookDispatchWorker() {
           throw error;
         }
 
+        await resp.text().catch(() => '');
+        console.log('[paso-6] Webhook entregado OK', { deliveryId: delivery.id, statusCode: resp.status, eventId: delivery.eventId });
         await prisma.webhookDelivery.update({
           where: { id: delivery.id },
           data: { status: 'SUCCESS', attempts: { increment: 1 }, lastError: null, nextRetryAt: null }
         });
         console.log('[paso-6] Webhook entregado OK', { deliveryId: delivery.id, statusCode: resp.status, eventId: delivery.eventId });
       } catch (err: any) {
-        console.log('[paso-6] Webhook falló', { deliveryId: delivery.id, error: err?.message ?? String(err) });
         await logger.error(
           `Webhook delivery error for ${delivery.endpoint.url}`,
           err,
@@ -109,6 +119,10 @@ export function startWebhookDispatchWorker() {
       concurrency: 10
     }
   );
+
+  worker.on('error', (err) => {
+    console.error('[webhook_dispatch] Worker error', err);
+  });
 
   worker.on('failed', async (job, err) => {
     if (!job) return;
@@ -135,7 +149,7 @@ export function startWebhookDispatchWorker() {
             maxAttempts: max
           }
         }
-      ).catch(() => {});
+      ).catch(console.error);
     } catch (updateErr) {
       const error = updateErr instanceof Error ? updateErr : new Error(String(updateErr));
       await logger.error('Failed to update webhook delivery status', error).catch(() => {});

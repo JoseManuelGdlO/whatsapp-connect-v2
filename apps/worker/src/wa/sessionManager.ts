@@ -249,11 +249,13 @@ export class SessionManager {
     // Helper function to handle session sync errors
     const handleSessionSyncError = async (err: any) => {
       const errorMessage = err?.message ?? String(err);
-      const isSessionError = errorMessage.includes('Over 2000 messages into the future') || 
+      const isSessionError = errorMessage.includes('Over 2000 messages into the future') ||
                             errorMessage.includes('SessionError') ||
                             errorMessage.includes('No matching sessions') ||
                             errorMessage.includes('message counter') ||
-                            errorMessage.includes('Failed to decrypt message');
+                            errorMessage.includes('Failed to decrypt message') ||
+                            errorMessage.includes('Invalid patch mac') ||
+                            errorMessage.includes('Bad MAC');
       
       if (isSessionError) {
         const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);

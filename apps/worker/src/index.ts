@@ -43,17 +43,39 @@ setInterval(() => {
   logger.info(`Worker alive ${new Date().toISOString()}`).catch(() => {});
 }, 30_000);
 
+// Handle uncaught exceptions (e.g. stream errors from undici/fetch when connection is closed)
+// These can occur when WhatsApp closes the connection mid-request (ECONNRESET, "terminated")
+// Log and exit so Docker/PM2 can restart the worker cleanly
+process.on('uncaughtException', (err: Error) => {
+  const msg = err?.message ?? String(err);
+  const cause = (err as any)?.cause;
+  const causeMsg = cause?.message ?? (typeof cause === 'string' ? cause : '');
+  // Use console.error for critical exit - logger might not flush in time
+  console.error('[worker] UncaughtException:', msg, causeMsg ? `(cause: ${causeMsg})` : '', err?.stack ?? '');
+  logger.error('UncaughtException - worker will exit', err instanceof Error ? err : new Error(String(err)), {
+    metadata: {
+      errorMessage: msg,
+      causeMessage: causeMsg,
+      note: 'Process exiting to allow container/PM2 restart.'
+    }
+  }).catch(() => {});
+  process.exit(1);
+});
+
 // Handle unhandled promise rejections that may come from libsignal/Baileys
 // These errors often occur during message decryption and may not be caught by our handlers
 process.on('unhandledRejection', async (reason: any, promise: Promise<any>) => {
   const errorMessage = reason?.message ?? String(reason);
   const errorStack = reason?.stack ?? '';
   
-  // Check if this is a session sync error from libsignal
+  // Check if this is a session sync error from libsignal/Baileys
   const isSessionError = errorMessage.includes('Over 2000 messages into the future') ||
                         errorMessage.includes('SessionError') ||
                         errorMessage.includes('Failed to decrypt message') ||
-                        errorStack.includes('session_cipher.js');
+                        errorMessage.includes('Invalid patch mac') ||
+                        errorMessage.includes('Bad MAC') ||
+                        errorStack.includes('session_cipher.js') ||
+                        errorStack.includes('chat-utils.js');
   
   if (isSessionError) {
     await logger.error('Unhandled session sync error detected (from libsignal)', reason, {
