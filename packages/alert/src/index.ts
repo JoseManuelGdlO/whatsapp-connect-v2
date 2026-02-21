@@ -2,10 +2,19 @@ import nodemailer from 'nodemailer';
 
 const ALERT_TIMEOUT_MS = 5000;
 
+/** No enviar otra alerta del mismo dispositivo antes de este tiempo (evita inundar el correo). */
+const DEVICE_ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hora
+
 function isConfigured(): boolean {
   const to = process.env.ALERT_EMAIL_TO;
   const host = process.env.SMTP_HOST;
   return Boolean(to && host);
+}
+
+/** Lista de correos destino: ALERT_EMAIL_TO puede ser "a@b.com, c@d.com" o uno solo. */
+function getAlertToAddresses(): string[] {
+  const raw = process.env.ALERT_EMAIL_TO ?? '';
+  return raw.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
 }
 
 function getTransporter(): nodemailer.Transporter | null {
@@ -33,16 +42,17 @@ export async function sendAlert(
   body: string
 ): Promise<void> {
   if (!isConfigured()) return;
+  const addresses = getAlertToAddresses();
+  if (addresses.length === 0) return;
   const transporter = getTransporter();
   if (!transporter) return;
-  const from = process.env.ALERT_EMAIL_FROM ?? process.env.ALERT_EMAIL_TO ?? 'noreply@localhost';
-  const to = process.env.ALERT_EMAIL_TO!;
+  const from = process.env.ALERT_EMAIL_FROM ?? addresses[0] ?? 'noreply@localhost';
   const fullBody = `[${service}]\n\n${body}\n\n---\nRevisa los logs en la base de datos o consola para más detalle.`;
   try {
     await Promise.race([
       transporter.sendMail({
         from,
-        to,
+        to: addresses,
         subject: `[WhatsApp Connect] ${subject}`,
         text: fullBody
       }),
@@ -61,9 +71,13 @@ export interface DeviceDisconnectContext {
   willReconnect?: boolean;
 }
 
+/** Por dispositivo: timestamp del último correo enviado (para no repetir el mismo error). */
+const lastDeviceAlertAt = new Map<string, number>();
+
 /**
  * Send an alert when a device is disconnected or has been disconnected.
  * Includes reason and log reference.
+ * Solo envía un correo por dispositivo como máximo cada 1 hora (evita inundar).
  */
 export async function sendDeviceDisconnectAlert(
   deviceId: string,
@@ -75,6 +89,11 @@ export async function sendDeviceDisconnectAlert(
   }
 ): Promise<void> {
   if (!isConfigured()) return;
+  const now = Date.now();
+  const last = lastDeviceAlertAt.get(deviceId) ?? 0;
+  if (now - last < DEVICE_ALERT_COOLDOWN_MS) return;
+  lastDeviceAlertAt.set(deviceId, now);
+
   const { label, tenantId, logContext } = options ?? {};
   const subject = `Dispositivo desconectado: ${label ?? deviceId}`;
   const lines = [
