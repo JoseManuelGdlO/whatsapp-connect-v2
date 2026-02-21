@@ -13,6 +13,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
     depends_on:
       redis: { condition: service_healthy }
     environment:
@@ -24,6 +25,19 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       BOT_API_KEY: ${BOT_API_KEY}
       FRONTEND_URL: ${FRONTEND_URL}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO}
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/health',r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     ports:
       # If 3001 is taken on the host, set API_PUBLIC_PORT in EasyPanel (e.g. 13001)
       - "${API_PUBLIC_PORT:-3001}:3001"
@@ -32,6 +46,7 @@ services:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
     depends_on:
       redis: { condition: service_healthy }
     environment:
@@ -39,6 +54,19 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       WA_AUTH_ENC_KEY_B64: ${WA_AUTH_ENC_KEY_B64}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO}
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3030/health',r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     # Optional: keep internal only. If you want to reach /health from outside, uncomment:
     # ports:
     #   - "3030:3030"

@@ -14,6 +14,7 @@ import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import crypto from 'crypto';
 import { createLogger } from '@wc/logger';
+import { sendAlert } from '@wc/alert';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -1044,9 +1045,38 @@ const port = Number(process.env.API_PORT ?? 3001);
   // Bind to all interfaces so reverse proxies (EasyPanel) can reach the container.
   app.listen(port, '0.0.0.0', async () => {
     await logger.info(`API listening on http://0.0.0.0:${port}`);
+    sendAlert('api', 'API iniciada correctamente', `API listening on http://0.0.0.0:${port}`).catch(() => {});
   });
 })().catch(async (err) => {
   await logger.error('API failed to start', err);
+  const reason = err?.message ?? String(err);
+  const body = `Razón del fallo: ${reason}\n\nRevisa los logs de la API en la base de datos o consola para más detalle.`;
+  await Promise.race([
+    sendAlert('api', 'API failed to start', body),
+    new Promise<void>((resolve) => setTimeout(resolve, 5000))
+  ]).catch(() => {});
   process.exit(1);
+});
+
+process.on('uncaughtException', (err: Error) => {
+  const msg = err?.message ?? String(err);
+  console.error('[api] UncaughtException:', msg, err?.stack ?? '');
+  logger.error('UncaughtException - API will exit', err, { metadata: { errorMessage: msg } }).catch(() => {});
+  const body = `Razón del fallo: ${msg}\n\nRevisa los logs de la API en la base de datos o consola para más detalle.`;
+  Promise.race([
+    sendAlert('api', 'API crashed (uncaughtException)', body),
+    new Promise<void>((resolve) => setTimeout(resolve, 5000))
+  ]).finally(() => process.exit(1));
+});
+
+process.on('unhandledRejection', (reason: unknown) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error('[api] UnhandledRejection:', msg);
+  logger.error('UnhandledRejection - API will exit', reason instanceof Error ? reason : new Error(String(reason)), { metadata: { errorMessage: msg } }).catch(() => {});
+  const body = `Razón del fallo: ${msg}\n\nRevisa los logs de la API en la base de datos o consola para más detalle.`;
+  Promise.race([
+    sendAlert('api', 'API crashed (unhandledRejection)', body),
+    new Promise<void>((resolve) => setTimeout(resolve, 5000))
+  ]).finally(() => process.exit(1));
 });
 

@@ -10,6 +10,7 @@ import { assertCryptoKeyConfigured } from './lib/crypto.js';
 import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
 import { createLogger } from '@wc/logger';
+import { sendAlert } from '@wc/alert';
 import { sessionManager } from './queues/deviceCommands.js';
 
 const port = Number(process.env.WORKER_HEALTH_PORT ?? 3030);
@@ -50,6 +51,7 @@ http
   })
   .listen(port, '0.0.0.0', async () => {
     await logger.info(`Worker health listening on http://0.0.0.0:${port}/health`).catch(() => {});
+    sendAlert('worker', 'Worker iniciado correctamente', `Worker health en http://0.0.0.0:${port}/health`).catch(() => {});
   });
 
 setInterval(() => {
@@ -88,7 +90,12 @@ process.on('uncaughtException', (err: Error) => {
         metadata: { errorMessage: msg, causeMessage: causeMsg, note: 'Process exiting to allow container/PM2 restart.' }
       })
       .catch(() => {});
-    process.exit(1);
+    const reason = `Razón: ${msg}${causeMsg ? ` (causa: ${causeMsg})` : ''}`;
+    const body = `${reason}\n\nRevisa los logs del worker en la base de datos o consola para más detalle.`;
+    Promise.race([
+      sendAlert('worker', 'Worker crashed - reinicio automático', body),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000))
+    ]).finally(() => process.exit(1));
   }
 });
 

@@ -14,14 +14,17 @@ COPY apps/worker/package.json apps/worker/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/logger/package.json packages/logger/package.json
+COPY packages/alert/package.json packages/alert/package.json
 RUN npm ci
 
 # Copy source and build
 COPY packages/db/prisma packages/db/prisma
 COPY packages/logger packages/logger
+COPY packages/alert packages/alert
 COPY apps/api apps/api
 RUN npx prisma generate --schema packages/db/prisma/schema.prisma
 RUN npm run build -w packages/logger
+RUN npm run build -w packages/alert
 RUN npm run build -w apps/api
 
 ENV NODE_ENV=production

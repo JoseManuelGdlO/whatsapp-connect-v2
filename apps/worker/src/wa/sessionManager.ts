@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js';
 import { loadAuthState } from './authStateDb.js';
 import { handleMessagesUpsert } from './inbound.js';
 import { createLogger } from '@wc/logger';
+import { sendDeviceDisconnectAlert } from '@wc/alert';
 
 const logger = createLogger(prisma, 'worker');
 
@@ -227,6 +228,11 @@ export class SessionManager {
             tenantId: device?.tenantId,
             metadata: { statusCode, reason, willReconnect: statusCode !== DisconnectReason.loggedOut }
           }).catch(() => {});
+          sendDeviceDisconnectAlert(deviceId, errorMessage, {
+            label: device?.label ?? undefined,
+            tenantId: device?.tenantId ?? undefined,
+            logContext: { statusCode, reason, willReconnect: statusCode !== DisconnectReason.loggedOut }
+          }).catch(() => {});
 
           const current = this.sessions.get(deviceId);
           if (!current || current.closing) return;
@@ -257,6 +263,11 @@ export class SessionManager {
         await logger.error('Error in connection.update handler', err, {
           deviceId,
           tenantId: device?.tenantId
+        }).catch(() => {});
+        const updateErrMsg = `connection.update_error: ${err?.message ?? 'unknown'}`;
+        sendDeviceDisconnectAlert(deviceId, updateErrMsg, {
+          label: device?.label ?? undefined,
+          tenantId: device?.tenantId ?? undefined
         }).catch(() => {});
       }
     });
@@ -296,14 +307,19 @@ export class SessionManager {
         }
         
         // Update device status
+        const lastErrorSessionSync = `session_sync_error: ${errorMessage.substring(0, 100)}`;
         await prisma.device.update({
           where: { id: deviceId },
           data: { 
             status: 'OFFLINE',
-            lastError: `session_sync_error: ${errorMessage.substring(0, 100)}`
+            lastError: lastErrorSessionSync
           }
         }).catch(() => {});
-        
+        sendDeviceDisconnectAlert(deviceId, lastErrorSessionSync, {
+          label: device?.label ?? undefined,
+          tenantId: device?.tenantId ?? undefined
+        }).catch(() => {});
+
         // Disconnect and reconnect to reset session state
         const current = this.sessions.get(deviceId);
         if (current && !current.closing) {
