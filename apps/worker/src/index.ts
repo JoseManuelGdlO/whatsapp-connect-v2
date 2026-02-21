@@ -8,6 +8,7 @@ import { startWebhookDispatchWorker } from './queues/webhookDispatch.js';
 import { startOutboundMessagesWorker } from './queues/outboundMessages.js';
 import { assertCryptoKeyConfigured } from './lib/crypto.js';
 import { prisma } from './lib/prisma.js';
+import { redis } from './lib/redis.js';
 import { createLogger } from '@wc/logger';
 import { sessionManager } from './queues/deviceCommands.js';
 
@@ -19,9 +20,21 @@ logger.info(`Worker starting (healthPort=${port})`).catch(() => {});
 
 assertCryptoKeyConfigured();
 
-startDeviceCommandsWorker();
-startWebhookDispatchWorker();
-startOutboundMessagesWorker();
+// Verify Redis is reachable so queue jobs can be consumed (API and worker must use same REDIS_URL)
+async function checkRedisAndStartWorkers() {
+  try {
+    await redis.ping();
+    console.log('[worker] Redis ping OK — API and worker can share the same queue');
+  } catch (err: any) {
+    console.error('[worker] Redis ping FAILED:', err?.message ?? err);
+    console.error('[worker] Outbound messages will stay queued until worker can connect to the same Redis as the API.');
+  }
+  startDeviceCommandsWorker();
+  startWebhookDispatchWorker();
+  startOutboundMessagesWorker();
+}
+
+checkRedisAndStartWorkers();
 
 // Minimal health endpoint for container checks (EasyPanel, Docker, etc.)
 http

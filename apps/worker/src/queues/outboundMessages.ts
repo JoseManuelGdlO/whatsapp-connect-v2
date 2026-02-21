@@ -250,5 +250,6 @@ export function startOutboundMessagesWorker() {
   logger.info('[worker] outbound_messages worker started', {
     metadata: { concurrency: 5 }
   }).catch(() => {});
+  console.log('[worker] outbound_messages worker started and listening for jobs (Redis queue: outbound_messages)');
   return worker;
 }

@@ -1,12 +1,24 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    depends_on:
+      redis: { condition: service_healthy }
     environment:
       API_PORT: 3001
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
@@ -20,10 +32,12 @@ services:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
+    depends_on:
+      redis: { condition: service_healthy }
     environment:
       WORKER_HEALTH_PORT: 3030
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       WA_AUTH_ENC_KEY_B64: ${WA_AUTH_ENC_KEY_B64}
     # Optional: keep internal only. If you want to reach /health from outside, uncomment:
     # ports:

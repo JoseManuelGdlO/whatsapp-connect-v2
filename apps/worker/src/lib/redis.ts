@@ -11,3 +11,21 @@ export const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379'
   },
 });
 
+// Log connection state for debugging (worker and API both use Redis for queues)
+const maskUrl = (url: string) => {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.hostname}:${u.port || '6379'}`;
+  } catch {
+    return '(invalid url)';
+  }
+};
+
+redis.on('connect', () => {
+  console.log(`[redis] connected to ${maskUrl(redisUrl)}`);
+});
+
+redis.on('error', (err) => {
+  console.error('[redis] connection error:', err.message);
+});
+

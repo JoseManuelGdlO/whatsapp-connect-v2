@@ -21,7 +21,20 @@ const logger = createLogger(prisma, 'api');
 
 // Disable conditional GET/ETag caching; the web UI polls and expects 200 JSON (not 304).
 app.set('etag', false);
-const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+// ioredis needs allowUsernameInURI=true when REDIS_URL has a username (e.g. Redis 6+ ACL: default:password@host:port)
+function getRedisUrl(): string {
+  const url = process.env.REDIS_URL ?? 'redis://localhost:6379';
+  try {
+    const u = new URL(url);
+    if (u.username) {
+      return url.includes('?') ? `${url}&allowUsernameInURI=true` : `${url}?allowUsernameInURI=true`;
+    }
+  } catch {
+    // ignore
+  }
+  return url;
+}
+const redis = new Redis(getRedisUrl(), {
   maxRetriesPerRequest: null
 });
 const deviceCommandsQueue = new Queue('device_commands', { connection: redis });
