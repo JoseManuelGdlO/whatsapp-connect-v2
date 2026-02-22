@@ -1,3 +1,11 @@
+/**
+ * API HTTP de WhatsApp Connect v2.
+ * Rutas: auth (login, /me), tenants, users, devices (CRUD, connect, disconnect, reset-session, reset-sender-sessions,
+ * stream, public-link), events, conversations, messages (send, test, outbound), webhooks.
+ * Autenticación: Bearer JWT (panel) o x-api-key + x-tenant-id (bot). Colas Redis: device_commands, outbound_messages.
+ * @see docs/ARQUITECTURA.md
+ * @see docs/FLUJOS.md
+ */
 import dotenv from 'dotenv';
 
 dotenv.config({ path: process.env.ENV_FILE ?? 'env.local' });
@@ -53,6 +61,8 @@ function safeEqual(a: string, b: string) {
 }
 
 type BotAuth = { tenantId: string };
+
+/** Middleware: exige x-api-key (BOT_API_KEY) y x-tenant-id; pone req.bot = { tenantId }. */
 function botApiKeyRequired(req: express.Request, res: express.Response, next: express.NextFunction) {
   const apiKey = req.header('x-api-key') ?? '';
   const expected = process.env.BOT_API_KEY ?? '';
@@ -66,6 +76,7 @@ function botApiKeyRequired(req: express.Request, res: express.Response, next: ex
   next();
 }
 
+/** Middleware: si hay x-api-key usa botApiKeyRequired; si no, authRequired (JWT Bearer). */
 function authOrBotApiKeyRequired(req: express.Request, res: express.Response, next: express.NextFunction) {
   const apiKey = req.header('x-api-key');
   if (apiKey) return botApiKeyRequired(req, res, next);
@@ -123,6 +134,7 @@ function getAuth(req: express.Request): JwtPayload {
   return JwtPayloadSchema.parse(decoded);
 }
 
+/** Middleware: exige Authorization Bearer JWT; pone req.auth con sub, role, tenantId. Responde 401 si falla. */
 function authRequired(req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
     (req as any).auth = getAuth(req);

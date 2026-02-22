@@ -22,6 +22,14 @@ const CLEAR_RECONNECT_DEBOUNCE_MS = 10 * 60 * 1000; // 10 minutes
 const RECONNECT_INITIAL_DELAY_MS = 5000;
 const RECONNECT_MAX_DELAY_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * Gestiona sesiones WhatsApp (Baileys) por deviceId.
+ * connect/disconnect se invocan desde el worker de device_commands; el estado de auth se persiste
+ * vía authStateDb (loadAuthState, cifrado con WA_AUTH_ENC_KEY_B64). Escucha messages.upsert
+ * y delega en handleMessagesUpsert. Actualiza Device (status, qr, lastError) en BD.
+ * @see apps/worker/src/wa/authStateDb.ts
+ * @see docs/FLUJOS.md (ciclo de vida dispositivo)
+ */
 export class SessionManager {
   private sessions = new Map<string, SessionEntry>();
   private cachedVersion: [number, number, number] | null = null;
@@ -40,6 +48,7 @@ export class SessionManager {
     }
   }
 
+  /** Inicia sesión Baileys para el dispositivo; persiste auth en BD; registra listeners (messages.upsert, connection.update, etc.). */
   async connect(deviceId: string) {
     if (this.sessions.has(deviceId)) return;
 
@@ -415,6 +424,7 @@ export class SessionManager {
     // or cause a connection.close event. We handle both cases above.
   }
 
+  /** Cierra socket y elimina sesión en memoria; actualiza Device a OFFLINE en BD. */
   async disconnect(deviceId: string) {
     this.reconnectAttempts.delete(deviceId);
     const entry = this.sessions.get(deviceId);

@@ -71,3 +71,7 @@ WhatsApp muestra ese texto al usuario cuando el negocio **no responde** (o no ha
 El worker mitiga esto: envía presencia "escribiendo..." **en cuanto llega el mensaje** (antes de marcar como leído), luego marca como leído, y de nuevo "escribiendo..." justo antes de enviar la respuesta. Si el bot no responde, la presencia se limpia a los ~25 s. Opcionalmente: `WORKER_COMPOSING_BEFORE_SEND_MS` (por defecto 1500 ms) para la duración antes del envío.
 
 **Si el error persiste** (por ejemplo el usuario ya vio "Esperando el mensaje" y al reenviar sigue igual), la única forma de "resetear" esa conversación es que el negocio **envíe un mensaje real**. Puedes activar un **mensaje de acuse automático**: define `WORKER_INBOUND_ACK_MESSAGE` (ej. `Un momento, te respondo en seguida.`) y el worker enviará ese texto al chat en cuanto reciba cualquier mensaje entrante. Así la conversación recibe siempre al menos un mensaje y WhatsApp deja de mostrar "Esperando el mensaje". El bot puede seguir respondiendo después por webhook; el acuse es adicional y opcional.
+
+## Depuración
+
+Cuando algo falle (mensajes entrantes que no llegan al bot, webhooks que fallan, dispositivos que no conectan, decryption failed), consulta la guía central: [docs/DIAGNOSTICO.md](../../docs/DIAGNOSTICO.md). Ahí encontrarás una tabla de síntomas → archivos, tablas BD y logs a revisar. Flujos paso a paso en [docs/FLUJOS.md](../../docs/FLUJOS.md).

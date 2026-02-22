@@ -1,3 +1,11 @@
+/**
+ * Worker BullMQ para la cola outbound_messages.
+ * Job data: { outboundMessageId: string }. Carga OutboundMessage y Device; obtiene socket de
+ * sessionManager; envía composing + texto por Baileys; actualiza OutboundMessage a SENT o FAILED.
+ * Estados en BD: QUEUED → PROCESSING → SENT | FAILED. Reintentos (attempts/backoff) configurados en API al encolar.
+ * @see apps/api/src/index.ts (POST /devices/:id/messages/send)
+ * @see docs/FLUJOS.md (mensaje saliente)
+ */
 import { Worker } from 'bullmq';
 
 import { prisma } from '../lib/prisma.js';
@@ -12,6 +20,7 @@ const COMPOSING_BEFORE_SEND_MS = typeof process.env.WORKER_COMPOSING_BEFORE_SEND
   ? Math.max(0, parseInt(process.env.WORKER_COMPOSING_BEFORE_SEND_MS, 10) || 1500)
   : 1500;
 
+/** Payload del job: id de OutboundMessage a enviar. */
 type OutboundJob = { outboundMessageId: string };
 
 export function startOutboundMessagesWorker() {

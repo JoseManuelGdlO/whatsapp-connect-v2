@@ -46,3 +46,7 @@ curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
 
 Para inspeccionar envíos:
 - `GET /devices/:id/messages/outbound` (últimos 50, incluye `status` y `error`).
+
+## Depuración
+
+Para localizar fallos de forma sistemática (auth, dispositivos, colas, worker), ver la guía central: [docs/DIAGNOSTICO.md](../../docs/DIAGNOSTICO.md). Flujos paso a paso en [docs/FLUJOS.md](../../docs/FLUJOS.md).

@@ -21,6 +21,15 @@ export type MessagesUpsertResult = {
   clearSenderAndReconnect?: { remoteJid: string; senderPn?: string };
 };
 
+/**
+ * Procesa mensajes entrantes (messages.upsert de Baileys).
+ * Filtra fromMe y status; envía composing y readMessages; normaliza; crea Event (message.inbound);
+ * por cada WebhookEndpoint del tenant crea WebhookDelivery y encola job webhook_dispatch.
+ * Si el mensaje es stub por fallo de descifrado, puede crear evento de decryptionFailed y devolver
+ * clearSenderAndReconnect para que el sessionManager limpie sesiones del remitente.
+ * @see docs/FLUJOS.md (mensaje entrante)
+ * @see docs/DIAGNOSTICO.md
+ */
 export async function handleMessagesUpsert(params: {
   deviceId: string;
   sock: WASocket;

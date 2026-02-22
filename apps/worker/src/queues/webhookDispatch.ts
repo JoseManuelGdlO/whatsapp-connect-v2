@@ -1,3 +1,11 @@
+/**
+ * Worker BullMQ para la cola webhook_dispatch.
+ * Job data: { deliveryId: string }. Carga WebhookDelivery + endpoint + event, hace POST firmado
+ * (x-signature HMAC-SHA256) a endpoint.url; actualiza WebhookDelivery a SUCCESS o FAILED/DLQ en failed handler.
+ * Timeout 15s por request. Reintentos y backoff configurados en add() desde inbound.
+ * @see apps/worker/src/wa/inbound.ts (encolado)
+ * @see docs/FLUJOS.md
+ */
 import crypto from 'crypto';
 import { Worker } from 'bullmq';
 
@@ -7,6 +15,7 @@ import { createLogger } from '@wc/logger';
 
 const logger = createLogger(prisma, 'worker');
 
+/** Payload del job: id de WebhookDelivery a entregar. */
 type WebhookJob = {
   deliveryId: string;
 };
