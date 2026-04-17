@@ -55,6 +55,7 @@ vi.mock('@wc/logger', () => {
 describe('handleMessagesUpsert', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    queueAddMock.mockResolvedValue({ id: 'job-1' });
   });
 
   it('marca clearSenderAndReconnect cuando detecta stub de descifrado', async () => {
@@ -124,5 +125,144 @@ describe('handleMessagesUpsert', () => {
     });
 
     expect(result).toBeUndefined();
+  });
+
+  it('procesa burst de mensajes sin acumular errores de encolado', async () => {
+    normalizeInboundMessageMock.mockImplementation(({ message }: any) => ({
+      from: message.key.remoteJid,
+      content: {
+        type: 'text',
+        text: 'ok'
+      }
+    }));
+
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    const sock = {
+      user: { id: 'me@s.whatsapp.net' },
+      sendPresenceUpdate: vi.fn(async () => {}),
+      readMessages: vi.fn(async () => {})
+    } as any;
+
+    const messageCount = 100;
+    const messages = Array.from({ length: messageCount }, (_, i) => ({
+      key: {
+        id: `burst-${i}`,
+        remoteJid: `521000000${i}@s.whatsapp.net`,
+        fromMe: false
+      }
+    })) as any;
+
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock,
+      messages
+    });
+
+    // Cada mensaje válido genera 1 entrega de webhook (hay 1 endpoint mockeado).
+    expect(queueAddMock).toHaveBeenCalledTimes(messageCount);
+  });
+
+  it('mantiene comportamiento estable en soak corto de mensajes de texto', async () => {
+    normalizeInboundMessageMock.mockImplementation(({ message }: any) => ({
+      from: message.key.remoteJid,
+      content: {
+        type: 'text',
+        text: 'soak'
+      }
+    }));
+
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    const sock = {
+      user: { id: 'me@s.whatsapp.net' },
+      sendPresenceUpdate: vi.fn(async () => {}),
+      readMessages: vi.fn(async () => {})
+    } as any;
+
+    for (let i = 0; i < 20; i += 1) {
+      await handleMessagesUpsert({
+        deviceId: 'device-1',
+        sock,
+        messages: [
+          {
+            key: {
+              id: `soak-${i}`,
+              remoteJid: `52177700${i}@s.whatsapp.net`,
+              fromMe: false
+            }
+          }
+        ] as any
+      });
+    }
+
+    expect(queueAddMock).toHaveBeenCalledTimes(20);
+  });
+
+  it('procesa tipos de media como mensajes válidos sin disparar clearSenderAndReconnect', async () => {
+    const mediaTypes = ['image', 'document', 'audio'] as const;
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    const sock = {
+      user: { id: 'me@s.whatsapp.net' },
+      sendPresenceUpdate: vi.fn(async () => {}),
+      readMessages: vi.fn(async () => {})
+    } as any;
+
+    for (const mediaType of mediaTypes) {
+      normalizeInboundMessageMock.mockReturnValueOnce({
+        from: '5216183610698@s.whatsapp.net',
+        content: {
+          type: mediaType,
+          text: null
+        }
+      });
+
+      const result = await handleMessagesUpsert({
+        deviceId: 'device-1',
+        sock,
+        messages: [
+          {
+            key: {
+              id: `media-${mediaType}`,
+              remoteJid: '5216183610698@s.whatsapp.net',
+              fromMe: false
+            }
+          }
+        ] as any
+      });
+
+      expect(result).toBeUndefined();
+    }
+  });
+
+  it('continúa procesando cuando readMessages falla (caos de dependencia)', async () => {
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216183610698@s.whatsapp.net',
+      content: {
+        type: 'text',
+        text: 'resilience'
+      }
+    });
+
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock: {
+        user: { id: 'me@s.whatsapp.net' },
+        sendPresenceUpdate: vi.fn(async () => {}),
+        readMessages: vi.fn(async () => {
+          throw new Error('redis_blip');
+        })
+      } as any,
+      messages: [
+        {
+          key: {
+            id: 'chaos-1',
+            remoteJid: '5216183610698@s.whatsapp.net',
+            fromMe: false
+          }
+        }
+      ] as any
+    });
+
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
   });
 });

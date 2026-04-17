@@ -154,4 +154,77 @@ describe('SessionManager', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(2);
   });
+
+  it('aplica backoff exponencial cuando hay cierres consecutivos de conexión', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-reconnect-backoff');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    expect(onConnectionUpdate).toBeDefined();
+
+    await onConnectionUpdate?.({
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 500 }, message: 'closed' } }
+    });
+
+    expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(2);
+
+    const handlersSecondSocket = hoisted.handlersBySocket[1];
+    const onConnectionUpdateSecondSocket = handlersSecondSocket['connection.update']?.[0];
+    expect(onConnectionUpdateSecondSocket).toBeDefined();
+
+    await onConnectionUpdateSecondSocket?.({
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 500 }, message: 'closed-again' } }
+    });
+
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('no reconecta cuando el cierre es loggedOut', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-logged-out');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    expect(onConnectionUpdate).toBeDefined();
+
+    await onConnectionUpdate?.({
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 401 }, message: 'logged-out' } }
+    });
+
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(1);
+    expect(manager.get('device-logged-out')).toBeNull();
+  });
+
+  it('no reconecta cuando loggedOut viene en error.data', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-logged-out-data');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    expect(onConnectionUpdate).toBeDefined();
+
+    await onConnectionUpdate?.({
+      connection: 'close',
+      lastDisconnect: { error: { data: 401, message: 'logged-out-data' } }
+    });
+
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(1);
+    expect(manager.get('device-logged-out-data')).toBeNull();
+  });
 });

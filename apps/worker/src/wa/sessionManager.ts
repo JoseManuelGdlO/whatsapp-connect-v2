@@ -22,6 +22,21 @@ const CLEAR_RECONNECT_DEBOUNCE_MS = 10 * 60 * 1000; // 10 minutes
 const RECONNECT_INITIAL_DELAY_MS = 5000;
 const RECONNECT_MAX_DELAY_MS = 5 * 60 * 1000; // 5 minutes
 
+type DisconnectInfo = {
+  statusCode?: number;
+  reason?: string;
+  errMsg?: string;
+};
+
+function extractDisconnectInfo(lastDisconnect: any): DisconnectInfo {
+  const err = lastDisconnect?.error as any;
+  const rawStatusCode = err?.output?.statusCode ?? err?.statusCode ?? err?.data ?? err?.output?.payload?.statusCode;
+  const statusCode = typeof rawStatusCode === 'number' && Number.isFinite(rawStatusCode) ? rawStatusCode : undefined;
+  const reason = statusCode ? DisconnectReason[statusCode] : undefined;
+  const errMsg = typeof err?.message === 'string' ? err.message : undefined;
+  return { statusCode, reason, errMsg };
+}
+
 /**
  * Gestiona sesiones WhatsApp (Baileys) por deviceId.
  * connect/disconnect se invocan desde el worker de device_commands; el estado de auth se persiste
@@ -217,9 +232,7 @@ export class SessionManager {
         }
 
         if (connection === 'close') {
-          const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-          const reason = statusCode ? DisconnectReason[statusCode] : undefined;
-          const errMsg = (lastDisconnect?.error as any)?.message as string | undefined;
+          const { statusCode, reason, errMsg } = extractDisconnectInfo(lastDisconnect);
           const errorMessage = reason ?? errMsg ?? 'connection_closed';
 
           await prisma.device.update({

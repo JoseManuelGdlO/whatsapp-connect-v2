@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test:load": "node scripts/wrapper-load-test.mjs",
+    "test:load:mock": "MOCK_TARGET=true TARGET_URL=http://127.0.0.1:3800 node scripts/wrapper-load-test.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
