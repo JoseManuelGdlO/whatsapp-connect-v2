@@ -712,6 +712,7 @@ app.get(
 app.post(
   '/devices/:id/connect',
   authRequired,
+  requireServiceScope('devices:public-link:write'),
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as AuthPayload;
