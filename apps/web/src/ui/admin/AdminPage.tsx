@@ -6,13 +6,16 @@ import { AllDevicesAdmin } from './AllDevicesAdmin';
 import { ClientesAdmin } from './ClientesAdmin';
 import { ConversationsTrace } from './ConversationsTrace';
 import { DevicesAdmin } from './DevicesAdmin';
+import { ServiceTokensAdmin } from './ServiceTokensAdmin';
 import { TenantSelector } from './TenantSelector';
 import { WebhooksAdmin } from './WebhooksAdmin';
 
 export function AdminPage() {
   const { token, user } = useAuth();
   const { tenantIdOverride, setTenantIdOverride } = useTenantId();
-  const [active, setActive] = useState<'clientes' | 'devices' | 'allDevices' | 'webhooks' | 'conversations'>('clientes');
+  const [active, setActive] = useState<
+    'clientes' | 'devices' | 'allDevices' | 'webhooks' | 'conversations' | 'serviceTokens'
+  >('clientes');
   const [pingStatus, setPingStatus] = useState<string | null>(null);
   const [pingLoading, setPingLoading] = useState(false);
 
@@ -49,6 +52,7 @@ export function AdminPage() {
           <button onClick={() => setActive('allDevices')}>Todos los dispositivos</button>
           <button onClick={() => setActive('conversations')}>Conversaciones</button>
           <button onClick={() => setActive('webhooks')}>Webhooks</button>
+          <button onClick={() => setActive('serviceTokens')}>Service tokens</button>
         </div>
         <p className="muted">Selecciona un cliente para gestionar sus dispositivos y webhooks.</p>
         <div className="actions" style={{ marginTop: 8, alignItems: 'center', gap: 8 }}>
@@ -77,6 +81,8 @@ export function AdminPage() {
         <AllDevicesAdmin token={token!} />
       ) : active === 'conversations' ? (
         <ConversationsTrace token={token!} tenantIdOverride={tenantIdOverride} />
+      ) : active === 'serviceTokens' ? (
+        <ServiceTokensAdmin token={token!} />
       ) : (
         <WebhooksAdmin token={token!} tenantIdOverride={tenantIdOverride} />
       )}

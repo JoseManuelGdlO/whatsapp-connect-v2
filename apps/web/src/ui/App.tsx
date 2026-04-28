@@ -4,6 +4,7 @@ import QRCode from 'qrcode';
 
 import { login } from '../api/client';
 import { useAuth } from '../state/auth';
+import { ServiceTokensAdmin } from './admin/ServiceTokensAdmin';
 
 type Device = {
   id: string;
@@ -100,7 +101,7 @@ function TenantSelector() {
 function AdminPage() {
   const { token, user } = useAuth();
   const { tenantIdOverride, setTenantIdOverride } = useTenantId();
-  const [active, setActive] = useState<'tenants' | 'users' | 'devices'>('tenants');
+  const [active, setActive] = useState<'tenants' | 'users' | 'devices' | 'serviceTokens'>('tenants');
 
   if (user?.role !== 'SUPERADMIN') return <div className="card">Forbidden</div>;
 
@@ -112,6 +113,7 @@ function AdminPage() {
           <button onClick={() => setActive('tenants')}>Tenants</button>
           <button onClick={() => setActive('users')}>Users</button>
           <button onClick={() => setActive('devices')}>Devices</button>
+          <button onClick={() => setActive('serviceTokens')}>Service tokens</button>
         </div>
         <p className="muted">Tip: al crear/seleccionar un tenant, guardamos su TenantId para usarlo en Devices/Webhooks.</p>
       </div>
@@ -126,6 +128,8 @@ function AdminPage() {
         />
       ) : active === 'users' ? (
         <UsersAdmin token={token!} />
+      ) : active === 'serviceTokens' ? (
+        <ServiceTokensAdmin token={token!} />
       ) : (
         <DevicesAdmin token={token!} tenantIdOverride={tenantIdOverride} />
       )}
