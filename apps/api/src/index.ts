@@ -28,6 +28,30 @@ const app = express();
 const prisma = new PrismaClient();
 const logger = createLogger(prisma, 'api');
 
+type ServiceJwtTokenDelegate = {
+  findFirst: (args: unknown) => Promise<{ id: string } | null>;
+  findMany: (args: unknown) => Promise<
+    {
+      id: string;
+      service: string;
+      scopes: unknown;
+      revokedAt: Date | null;
+      lastUsedAt: Date | null;
+      createdAt: Date;
+    }[]
+  >;
+  create: (args: unknown) => Promise<{ id: string }>;
+  update: (args: unknown) => Promise<unknown>;
+};
+
+function serviceJwtTokenDelegate(): ServiceJwtTokenDelegate {
+  const delegate = (prisma as any).serviceJwtToken;
+  if (!delegate) {
+    throw new Error('prisma_client_outdated_run_prisma_generate');
+  }
+  return delegate as ServiceJwtTokenDelegate;
+}
+
 // Disable conditional GET/ETag caching; the web UI polls and expects 200 JSON (not 304).
 app.set('etag', false);
 // ioredis needs allowUsernameInURI=true when REDIS_URL has a username (e.g. Redis 6+ ACL: default:password@host:port)
@@ -109,12 +133,35 @@ const asyncHandler = (fn: express.RequestHandler): express.RequestHandler => {
   };
 };
 
+const SERVICE_SCOPES = [
+  'devices:status:read',
+  'devices:public-link:write',
+  'messages:send',
+  'messages:test'
+] as const;
+
+type ServiceScope = (typeof SERVICE_SCOPES)[number];
+
 const JwtPayloadSchema = z.object({
   sub: z.string(),
   role: z.nativeEnum(UserRole),
-  tenantId: z.string().nullable()
+  tenantId: z.string().nullable(),
+  // Evita que un token de servicio pase como token de usuario.
+  type: z.literal('user').optional()
 });
 type JwtPayload = z.infer<typeof JwtPayloadSchema>;
+
+const ServiceJwtPayloadSchema = z.object({
+  type: z.literal('service'),
+  sub: z.string(),
+  role: z.literal(UserRole.SUPERADMIN),
+  tenantId: z.string().nullable(),
+  service: z.string(),
+  scopes: z.array(z.enum(SERVICE_SCOPES)).default([]),
+  jti: z.string()
+});
+type ServiceJwtPayload = z.infer<typeof ServiceJwtPayloadSchema>;
+type AuthPayload = JwtPayload | ServiceJwtPayload;
 
 function signToken(payload: JwtPayload) {
   const secret = process.env.JWT_SECRET;
@@ -122,7 +169,33 @@ function signToken(payload: JwtPayload) {
   return jwt.sign(payload, secret, { expiresIn: '12h' });
 }
 
-function getAuth(req: express.Request): JwtPayload {
+function signServiceToken(payload: ServiceJwtPayload) {
+  const secret = process.env.SERVICE_JWT_SECRET ?? process.env.JWT_SECRET;
+  if (!secret) throw new Error('SERVICE_JWT_SECRET or JWT_SECRET is required');
+  return jwt.sign(payload, secret);
+}
+
+function tokenHash(value: string) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+async function resolveServiceToken(token: string): Promise<ServiceJwtPayload> {
+  const secret = process.env.SERVICE_JWT_SECRET ?? process.env.JWT_SECRET;
+  if (!secret) throw new Error('SERVICE_JWT_SECRET or JWT_SECRET is required');
+  const decoded = jwt.verify(token, secret);
+  const payload = ServiceJwtPayloadSchema.parse(decoded);
+  const record = await serviceJwtTokenDelegate().findFirst({
+    where: { tokenHash: tokenHash(token), revokedAt: null }
+  });
+  if (!record) throw new Error('service_token_revoked_or_unknown');
+  await serviceJwtTokenDelegate().update({
+    where: { id: record.id },
+    data: { lastUsedAt: new Date() }
+  });
+  return payload;
+}
+
+async function getAuth(req: express.Request): Promise<AuthPayload> {
   const header = req.header('authorization');
   if (!header?.startsWith('Bearer ')) {
     throw new Error('Missing Bearer token');
@@ -130,33 +203,66 @@ function getAuth(req: express.Request): JwtPayload {
   const token = header.slice('Bearer '.length);
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is required');
-  const decoded = jwt.verify(token, secret);
-  return JwtPayloadSchema.parse(decoded);
+  try {
+    const decoded = jwt.verify(token, secret);
+    if (typeof decoded === 'object' && decoded !== null && (decoded as any).type === 'service') {
+      // Aunque comparta secret con JWT de usuario, un token de servicio SIEMPRE debe validar revocación en DB.
+      return resolveServiceToken(token);
+    }
+    return JwtPayloadSchema.parse(decoded);
+  } catch {
+    return resolveServiceToken(token);
+  }
 }
 
 /** Middleware: exige Authorization Bearer JWT; pone req.auth con sub, role, tenantId. Responde 401 si falla. */
 function authRequired(req: express.Request, res: express.Response, next: express.NextFunction) {
-  try {
-    (req as any).auth = getAuth(req);
-    next();
-  } catch (err: any) {
-    logger.warn('Authentication failed', err, {
-      metadata: { path: req.path, method: req.method }
-    }).catch(() => {}); // Don't block response if logging fails
-    res.status(401).json({ error: 'unauthorized', message: err?.message ?? 'unauthorized' });
-  }
+  return getAuth(req)
+    .then((auth) => {
+      (req as any).auth = auth;
+      return next();
+    })
+    .catch((err: any) => {
+      logger
+        .warn('Authentication failed', err, {
+          metadata: { path: req.path, method: req.method }
+        })
+        .catch(() => {}); // Don't block response if logging fails
+      return res.status(401).json({ error: 'unauthorized', message: err?.message ?? 'unauthorized' });
+    });
 }
 
 function requireRole(...roles: UserRole[]) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const auth = (req as any).auth as JwtPayload | undefined;
+    const auth = (req as any).auth as AuthPayload | undefined;
     if (!auth) return res.status(401).json({ error: 'unauthorized' });
+    if ('type' in auth && auth.type === 'service') {
+      const serviceScopeValidated = (req as any).__serviceScopeValidated === true;
+      if (!serviceScopeValidated) {
+        return res.status(403).json({ error: 'forbidden_service_token' });
+      }
+      return next();
+    }
     if (!roles.includes(auth.role)) return res.status(403).json({ error: 'forbidden' });
     next();
   };
 }
 
-function getTenantScope(auth: JwtPayload) {
+function requireServiceScope(scope: ServiceScope) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const auth = (req as any).auth as AuthPayload | undefined;
+    const bot = (req as any).bot as BotAuth | undefined;
+    // Requests authenticated via x-api-key set req.bot (without req.auth) and should pass this middleware.
+    if (!auth && bot) return next();
+    if (!auth) return res.status(401).json({ error: 'unauthorized' });
+    if (!('type' in auth) || auth.type !== 'service') return next();
+    if (!auth.scopes.includes(scope)) return res.status(403).json({ error: 'missing_scope', scope });
+    (req as any).__serviceScopeValidated = true;
+    return next();
+  };
+}
+
+function getTenantScope(auth: AuthPayload) {
   if (auth.role === UserRole.SUPERADMIN) return { tenantId: null as string | null, isSuperadmin: true };
   if (!auth.tenantId) throw new Error('tenant_required');
   return { tenantId: auth.tenantId, isSuperadmin: false };
@@ -260,11 +366,92 @@ app.post(
   })
 );
 
+app.post(
+  '/auth/service-jwt',
+  authRequired,
+  requireRole(UserRole.SUPERADMIN),
+  asyncHandler(async (req, res) => {
+    const Body = z.object({
+      service: z.string().min(2).max(120),
+      scopes: z.array(z.enum(SERVICE_SCOPES)).min(1).default(SERVICE_SCOPES as unknown as ServiceScope[])
+    });
+    const { service, scopes } = Body.parse(req.body ?? {});
+    const auth = (req as any).auth as AuthPayload;
+    const payload: ServiceJwtPayload = {
+      type: 'service',
+      sub: auth.sub,
+      role: UserRole.SUPERADMIN,
+      tenantId: auth.tenantId ?? null,
+      service,
+      scopes,
+      jti: crypto.randomUUID()
+    };
+    const token = signServiceToken(payload);
+    const row = await serviceJwtTokenDelegate().create({
+      data: {
+        ownerUserId: auth.sub,
+        service,
+        tokenHash: tokenHash(token),
+        scopes
+      }
+    });
+    res.status(201).json({
+      id: row.id,
+      tokenType: 'service_jwt',
+      service,
+      scopes,
+      token
+    });
+  })
+);
+
+app.get(
+  '/auth/service-jwt',
+  authRequired,
+  requireRole(UserRole.SUPERADMIN),
+  asyncHandler(async (req, res) => {
+    const auth = (req as any).auth as AuthPayload;
+    const rows = await serviceJwtTokenDelegate().findMany({
+      where: { ownerUserId: auth.sub },
+      orderBy: { createdAt: 'desc' },
+      take: 100
+    });
+    res.json(
+      rows.map((row) => ({
+        id: row.id,
+        service: row.service,
+        scopes: row.scopes,
+        revokedAt: row.revokedAt,
+        lastUsedAt: row.lastUsedAt,
+        createdAt: row.createdAt
+      }))
+    );
+  })
+);
+
+app.post(
+  '/auth/service-jwt/:id/revoke',
+  authRequired,
+  requireRole(UserRole.SUPERADMIN),
+  asyncHandler(async (req, res) => {
+    const auth = (req as any).auth as AuthPayload;
+    const row = await serviceJwtTokenDelegate().findFirst({
+      where: { id: req.params.id, ownerUserId: auth.sub }
+    });
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    await serviceJwtTokenDelegate().update({
+      where: { id: row.id },
+      data: { revokedAt: new Date() }
+    });
+    res.json({ ok: true });
+  })
+);
+
 app.get(
   '/me',
   authRequired,
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const user = await prisma.user.findUnique({ where: { id: auth.sub } });
   if (!user) return res.status(404).json({ error: 'not_found' });
   res.json({ id: user.id, email: user.email, role: user.role, tenantId: user.tenantId });
@@ -357,7 +544,7 @@ app.delete(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-    const auth = (req as any).auth as JwtPayload;
+    const auth = (req as any).auth as AuthPayload;
     const userId = req.params.id;
     if (auth.sub === userId) return res.status(400).json({ error: 'cannot_delete_self' });
     const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -372,7 +559,7 @@ app.post(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const Body = z.object({
     tenantId: z.string().optional(),
@@ -398,7 +585,7 @@ app.get(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const tenantId = scope.isSuperadmin ? (req.query.tenantId as string | undefined) : scope.tenantId;
   if (!tenantId) return res.status(400).json({ error: 'tenantId_required' });
@@ -413,9 +600,10 @@ app.get(
 app.get(
   '/devices/:id/status',
   authRequired,
+  requireServiceScope('devices:status:read'),
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const device = await prisma.device.findUnique({ where: { id: req.params.id } });
   if (!device) return res.status(404).json({ error: 'not_found' });
@@ -429,7 +617,7 @@ app.post(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-    const auth = (req as any).auth as JwtPayload;
+    const auth = (req as any).auth as AuthPayload;
     const scope = getTenantScope(auth);
     const device = await prisma.device.findUnique({ where: { id: req.params.id } });
     if (!device) return res.status(404).json({ error: 'not_found' });
@@ -450,7 +638,7 @@ app.post(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-    const auth = (req as any).auth as JwtPayload;
+    const auth = (req as any).auth as AuthPayload;
     const scope = getTenantScope(auth);
     const device = await prisma.device.findUnique({ where: { id: req.params.id } });
     if (!device) return res.status(404).json({ error: 'not_found' });
@@ -483,7 +671,7 @@ app.get(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const deviceId = req.params.id;
 
@@ -526,7 +714,7 @@ app.post(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const device = await prisma.device.findUnique({ where: { id: req.params.id } });
   if (!device) return res.status(404).json({ error: 'not_found' });
@@ -542,7 +730,7 @@ app.post(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const device = await prisma.device.findUnique({ where: { id: req.params.id } });
   if (!device) return res.status(404).json({ error: 'not_found' });
@@ -556,9 +744,10 @@ app.post(
 app.post(
   '/devices/:id/public-link',
   authRequired,
+  requireServiceScope('devices:public-link:write'),
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-    const auth = (req as any).auth as JwtPayload;
+    const auth = (req as any).auth as AuthPayload;
     const scope = getTenantScope(auth);
     const device = await prisma.device.findUnique({ where: { id: req.params.id } });
     if (!device) return res.status(404).json({ error: 'not_found' });
@@ -594,7 +783,7 @@ app.delete(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-    const auth = (req as any).auth as JwtPayload;
+    const auth = (req as any).auth as AuthPayload;
     const scope = getTenantScope(auth);
     const device = await prisma.device.findUnique({ where: { id: req.params.id } });
     if (!device) return res.status(404).json({ error: 'not_found' });
@@ -618,7 +807,7 @@ app.get(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const tenantId = scope.isSuperadmin ? (req.query.tenantId as string | undefined) : scope.tenantId;
   if (!tenantId) return res.status(400).json({ error: 'tenantId_required' });
@@ -646,7 +835,7 @@ app.get(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-    const auth = (req as any).auth as JwtPayload;
+    const auth = (req as any).auth as AuthPayload;
     const scope = getTenantScope(auth);
     const device = await prisma.device.findUnique({ where: { id: req.params.id } });
     if (!device) return res.status(404).json({ error: 'not_found' });
@@ -718,7 +907,7 @@ app.get(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-    const auth = (req as any).auth as JwtPayload;
+    const auth = (req as any).auth as AuthPayload;
     const scope = getTenantScope(auth);
     const device = await prisma.device.findUnique({ where: { id: req.params.id } });
     if (!device) return res.status(404).json({ error: 'not_found' });
@@ -791,11 +980,15 @@ function toJid(to: string): string {
 app.post(
   '/devices/:id/messages/send',
   authOrBotApiKeyRequired,
+  requireServiceScope('messages:send'),
   asyncHandler(async (req, res) => {
   const bot = (req as any).bot as BotAuth | undefined;
-  const auth = (req as any).auth as JwtPayload | undefined;
+  const auth = (req as any).auth as AuthPayload | undefined;
+  if (!bot && !auth) return res.status(401).json({ error: 'unauthorized' });
   if (!bot && auth && auth.role !== UserRole.SUPERADMIN) return res.status(403).json({ error: 'forbidden' });
-  const scope = bot ? { tenantId: bot.tenantId, isSuperadmin: false } : getTenantScope(auth as JwtPayload);
+  const scope = bot
+    ? { tenantId: bot.tenantId, isSuperadmin: false }
+    : getTenantScope(auth as AuthPayload);
 
   const Body = z.object({
     to: z.string().min(3),
@@ -835,11 +1028,15 @@ app.post(
 app.post(
   '/devices/:id/messages/test',
   authOrBotApiKeyRequired,
+  requireServiceScope('messages:test'),
   asyncHandler(async (req, res) => {
   const bot = (req as any).bot as BotAuth | undefined;
-  const auth = (req as any).auth as JwtPayload | undefined;
+  const auth = (req as any).auth as AuthPayload | undefined;
+  if (!bot && !auth) return res.status(401).json({ error: 'unauthorized' });
   if (!bot && auth && auth.role !== UserRole.SUPERADMIN) return res.status(403).json({ error: 'forbidden' });
-  const scope = bot ? { tenantId: bot.tenantId, isSuperadmin: false } : getTenantScope(auth as JwtPayload);
+  const scope = bot
+    ? { tenantId: bot.tenantId, isSuperadmin: false }
+    : getTenantScope(auth as AuthPayload);
 
   const Body = z.object({
     to: z.string().min(3),
@@ -879,7 +1076,7 @@ app.get(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const device = await prisma.device.findUnique({ where: { id: req.params.id } });
   if (!device) return res.status(404).json({ error: 'not_found' });
@@ -899,7 +1096,7 @@ app.get(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const tenantId = scope.isSuperadmin ? (req.query.tenantId as string | undefined) : scope.tenantId;
   if (!tenantId) return res.status(400).json({ error: 'tenantId_required' });
@@ -917,7 +1114,7 @@ app.post(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
 
   const Body = z.object({
@@ -951,7 +1148,7 @@ app.patch(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
 
   const Body = z.object({
@@ -978,7 +1175,7 @@ app.delete(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const existing = await prisma.webhookEndpoint.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'not_found' });
@@ -993,7 +1190,7 @@ app.post(
   authRequired,
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
-  const auth = (req as any).auth as JwtPayload;
+  const auth = (req as any).auth as AuthPayload;
   const scope = getTenantScope(auth);
   const endpoint = await prisma.webhookEndpoint.findUnique({ where: { id: req.params.id } });
   if (!endpoint) return res.status(404).json({ error: 'not_found' });
