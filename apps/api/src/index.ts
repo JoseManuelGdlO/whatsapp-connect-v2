@@ -23,6 +23,7 @@ import { Redis } from 'ioredis';
 import crypto from 'crypto';
 import { createLogger } from '@wc/logger';
 import { sendAlert } from '@wc/alert';
+import { sendMessageBodySchema } from './messages/sendPayload.js';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -953,11 +954,11 @@ app.get(
     });
 
     const outboundMessages: { id: string; type: 'outbound'; text: string; timestamp: string; fromMe: true; status?: string }[] = outboundRows.map((row) => {
-      const payload = (row.payloadJson as { text?: string }) ?? {};
+      const payload = (row.payloadJson as { text?: string; caption?: string }) ?? {};
       return {
         id: row.id,
         type: 'outbound' as const,
-        text: payload.text ?? '',
+        text: payload.text ?? payload.caption ?? '',
         timestamp: row.createdAt.toISOString(),
         fromMe: true as const,
         status: row.status
@@ -991,13 +992,7 @@ app.post(
     ? { tenantId: bot.tenantId, isSuperadmin: false }
     : getTenantScope(auth as AuthPayload);
 
-  const Body = z.object({
-    to: z.string().min(3),
-    type: z.literal('text').default('text'),
-    text: z.string().min(1),
-    isTest: z.boolean().optional()
-  });
-  const body = Body.parse(req.body);
+  const body = sendMessageBodySchema.parse(req.body);
 
   const device = await prisma.device.findUnique({ where: { id: req.params.id } });
   if (!device) return res.status(404).json({ error: 'not_found' });
@@ -1009,8 +1004,10 @@ app.post(
       tenantId: device.tenantId,
       deviceId: device.id,
       to: toJid(body.to),
-      type: 'text',
-      payloadJson: { text: body.text },
+      type: body.type,
+      payloadJson: body.type === 'text'
+        ? { text: body.text }
+        : { imageUrl: body.imageUrl, caption: body.caption ?? null },
       isTest: body.isTest ?? false
     }
   });

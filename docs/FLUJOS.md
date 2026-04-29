@@ -69,7 +69,7 @@ sequenceDiagram
 |------|---------|----------|----------|
 | 1 | `apps/api/src/index.ts` — POST `/devices/:id/messages/send` | Valida device, tenant, status=ONLINE; crea OutboundMessage; encola job | 409 device_not_online: Device.status; 403/404: tenant o device |
 | 2 | `apps/worker/src/queues/outboundMessages.ts` | Busca OutboundMessage; actualiza PROCESSING; busca Device y socket en SessionManager | Mensaje no encontrado: id erróneo; device_not_online / device_not_connected: Device o socket |
-| 3 | Mismo worker | `sock.sendMessage(to, { text })` | FAILED: OutboundMessage.error; log "[paso-9] FALLO envío por socket"; reintentos BullMQ |
+| 3 | Mismo worker | `sock.sendMessage(...)` según tipo (`{ text }` o `{ image: { url }, caption }`) | FAILED: OutboundMessage.error; log "[paso-9] FALLO envío por socket"; reintentos BullMQ |
 
 **Logs útiles:** `[paso-7]` (API encolado), `[paso-8]` / `[paso-9]` (worker); tabla `OutboundMessage` (status, error).
 

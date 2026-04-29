@@ -22,6 +22,27 @@ const COMPOSING_BEFORE_SEND_MS = typeof process.env.WORKER_COMPOSING_BEFORE_SEND
 
 /** Payload del job: id de OutboundMessage a enviar. */
 type OutboundJob = { outboundMessageId: string };
+const MEDIA_FETCH_TIMEOUT_MS = typeof process.env.WORKER_MEDIA_FETCH_TIMEOUT_MS !== 'undefined'
+  ? Math.max(1000, parseInt(process.env.WORKER_MEDIA_FETCH_TIMEOUT_MS, 10) || 10000)
+  : 10000;
+
+function mediaDomain(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function classifyMediaSendError(err: unknown): string {
+  const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  if (message.includes('timeout') || message.includes('timed out')) return 'media_timeout';
+  if (message.includes('status code 403') || message.includes('status code 404')) return 'media_unreachable';
+  if (message.includes('fetch failed') || message.includes('failed to fetch')) return 'media_fetch_failed';
+  if (message.includes('content-length') || message.includes('too large')) return 'media_too_large';
+  if (message.includes('unsupported')) return 'unsupported_media_type';
+  return 'media_fetch_failed';
+}
 
 export function startOutboundMessagesWorker() {
   const worker = new Worker<OutboundJob>(
@@ -123,7 +144,7 @@ export function startOutboundMessagesWorker() {
         return;
       }
 
-      if (row.type !== 'text') {
+      if (row.type !== 'text' && row.type !== 'image') {
         console.log('[paso-8] FALLO outbound: unsupported_type', { outboundMessageId: row.id, type: row.type });
         await prisma.outboundMessage.update({
           where: { id: row.id },
@@ -138,17 +159,6 @@ export function startOutboundMessagesWorker() {
       }
 
       const payload = row.payloadJson as any;
-      const text = payload?.text;
-      if (!text || typeof text !== 'string') {
-        const error = new Error('payload.text required');
-        await logger.error('Invalid outbound message payload', error, {
-          tenantId: row.tenantId,
-          deviceId: row.deviceId,
-          metadata: { outboundMessageId: row.id }
-        }).catch(() => {});
-        throw error;
-      }
-
       const to = row.to; // expects jid or phone@s.whatsapp.net depending on caller
       const queuedAt = row.createdAt.getTime();
       const processingDelay = Date.now() - queuedAt;
@@ -171,7 +181,49 @@ export function startOutboundMessagesWorker() {
         const sendStartTime = Date.now();
         await sock.sendPresenceUpdate('composing', to);
         await new Promise((r) => setTimeout(r, COMPOSING_BEFORE_SEND_MS));
-        const sent = await sock.sendMessage(to, { text });
+        let sent: any = null;
+
+        if (row.type === 'text') {
+          const text = payload?.text;
+          if (!text || typeof text !== 'string') {
+            const error = new Error('payload.text required');
+            await logger.error('Invalid outbound text payload', error, {
+              tenantId: row.tenantId,
+              deviceId: row.deviceId,
+              metadata: { outboundMessageId: row.id }
+            }).catch(() => {});
+            throw error;
+          }
+          sent = await sock.sendMessage(to, { text });
+        } else {
+          const imageUrl = payload?.imageUrl;
+          const caption = payload?.caption;
+          if (!imageUrl || typeof imageUrl !== 'string') {
+            const error = new Error('payload.imageUrl required');
+            await logger.error('Invalid outbound image payload', error, {
+              tenantId: row.tenantId,
+              deviceId: row.deviceId,
+              metadata: { outboundMessageId: row.id }
+            }).catch(() => {});
+            throw error;
+          }
+          sent = await sock.sendMessage(
+            to,
+            {
+              image: { url: imageUrl },
+              ...(typeof caption === 'string' && caption.trim() ? { caption } : {})
+            },
+            { mediaUploadTimeoutMs: MEDIA_FETCH_TIMEOUT_MS }
+          );
+          await logger.info('Outbound image sent via Baileys', {
+            tenantId: row.tenantId,
+            deviceId: row.deviceId,
+            metadata: {
+              outboundMessageId: row.id,
+              mediaDomain: mediaDomain(imageUrl)
+            }
+          }).catch(() => {});
+        }
         await sock.sendPresenceUpdate('paused', to).catch(() => {});
         const sendDuration = Date.now() - sendStartTime;
         const providerMessageId = sent?.key?.id ?? null;
@@ -196,7 +248,16 @@ export function startOutboundMessagesWorker() {
           }).catch(() => {});
         }
       } catch (err: any) {
-        console.log('[paso-9] FALLO envío por socket', { outboundMessageId: row.id, to, error: err?.message ?? String(err) });
+        const normalizedError = row.type === 'image'
+          ? classifyMediaSendError(err)
+          : (err?.message ?? 'failed');
+        console.log('[paso-9] FALLO envío por socket', {
+          outboundMessageId: row.id,
+          to,
+          type: row.type,
+          error: err?.message ?? String(err),
+          normalizedError
+        });
         await logger.error('Failed to send outbound message', err, {
           tenantId: row.tenantId,
           deviceId: row.deviceId,
@@ -204,10 +265,11 @@ export function startOutboundMessagesWorker() {
             outboundMessageId: row.id, 
             to,
             processingDelayMs: processingDelay,
-            error: err?.message
+            error: err?.message,
+            normalizedError
           }
         }).catch(() => {});
-        throw err;
+        throw new Error(normalizedError);
       }
     },
     { connection: redis, concurrency: 5 }

@@ -24,9 +24,13 @@ Cuando llega un inbound por webhook, tu bot puede responder enviando un mensaje 
 
 ### Enviar respuesta
 - Endpoint: `POST /devices/:deviceId/messages/send`
-- Body (text):
+- Body (`type: "text"`):
   - `to`: usar `normalized.from` tal cual (es JID)
   - `text`: tu respuesta
+- Body (`type: "image"`):
+  - `to`: usar `normalized.from` tal cual (es JID)
+  - `imageUrl`: URL pública `http/https` accesible desde el worker
+  - `caption` (opcional)
 
 Ejemplo:
 
@@ -36,6 +40,12 @@ curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
   -H "x-api-key: $BOT_API_KEY" \
   -H "x-tenant-id: $TENANT_ID" \
   -d '{"to":"'"$FROM_JID"'","text":"Hola, soy el bot"}'
+
+curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
+  -H "content-type: application/json" \
+  -H "x-api-key: $BOT_API_KEY" \
+  -H "x-tenant-id: $TENANT_ID" \
+  -d '{"to":"'"$FROM_JID"'","type":"image","imageUrl":"https://example.com/car.png","caption":"Imagen del vehiculo"}'
 ```
 
 ## Troubleshooting- **401 `invalid_api_key`**: el header `x-api-key` no coincide con `BOT_API_KEY` del API.
