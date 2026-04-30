@@ -127,6 +127,9 @@ export function DevicesPage() {
                   <div className="rowTitle" style={{ marginBottom: '4px', fontWeight: 600, fontSize: '14px', color: '#000000' }}>
                     {d.label || d.id || 'Device sin nombre'}
                   </div>
+                  <div style={{ fontSize: '11px', color: '#475569', marginBottom: '2px', wordBreak: 'break-all' }}>
+                    ID: {d.id}
+                  </div>
                   <div className="rowMeta" style={{ fontSize: '12px', color: '#64748b' }}>
                     {d.status}
                     {d.lastError ? ` · ${d.lastError}` : ''}
@@ -249,6 +252,42 @@ export function DevicesPage() {
                   Copiar Link Público
                 </button>
               )}
+            </div>
+            <div
+              style={{
+                marginTop: 8,
+                marginBottom: 8,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap'
+              }}
+            >
+              <span className="muted">Device ID:</span>
+              <code
+                style={{
+                  fontSize: '12px',
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 6,
+                  padding: '2px 6px'
+                }}
+              >
+                {selected.id}
+              </code>
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(selected.id);
+                    alert('Device ID copiado al portapapeles.');
+                  } catch (err: unknown) {
+                    alert(`Error: ${err instanceof Error ? err.message : 'No se pudo copiar el Device ID'}`);
+                  }
+                }}
+                style={{ padding: '4px 8px', fontSize: '12px' }}
+              >
+                Copiar ID
+              </button>
             </div>
 
             {selected.status === 'QR' && qrDataUrl ? <img src={qrDataUrl} alt="qr" style={{ width: 260, height: 260 }} /> : null}
