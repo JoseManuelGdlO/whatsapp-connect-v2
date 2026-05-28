@@ -46,7 +46,8 @@ El body del webhook tiene esta forma:
   "normalized": {
     "kind": "inbound_message",
     "messageId": "3EB0...",
-    "from": "549XXXXXXXXXX@s.whatsapp.net",
+    "from": "60911863783463@lid",
+    "fromPhone": "5216183610698",
     "to": "549YYYYYYYYYY@s.whatsapp.net",
     "timestamp": 1736900000,
     "content": { "type": "text", "text": "hola", "media": null }
@@ -59,7 +60,8 @@ El body del webhook tiene esta forma:
 ### Campos clave para responder
 Para que tu bot responda “al mismo chat”:
 - `deviceId`: desde qué WhatsApp responder (se usa en `/devices/:id/messages/send`)
-- `normalized.from`: chat destino (JID; usar tal cual como `to`)
+- `normalized.from`: chat destino (JID; usar tal cual como `to`; puede ser `@lid`)
+- `normalized.fromPhone`: dígitos del teléfono solo para mostrar/CRM (`null` si WhatsApp no envió PN); no usar para enviar mensajes
 - `tenantId` o header `x-tenant-id`: úsalo como `x-tenant-id` al llamar el API (modo bot con `x-api-key`)
 
 ### "Esperando el mensaje. Esto puede tomar tiempo"

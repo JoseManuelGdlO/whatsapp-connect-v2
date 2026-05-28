@@ -40,7 +40,10 @@ function getMediaMeta(msg: proto.IMessage | undefined) {
 export type NormalizedInboundMessage = {
   kind: 'inbound_message';
   messageId: string;
+  /** JID for replying (LID when WhatsApp uses @lid). */
   from: string;
+  /** E.164-style digits for display/CRM only; null when PN is not available. */
+  fromPhone: string | null;
   to: string | null;
   timestamp: number | null;
   content: {
@@ -49,6 +52,45 @@ export type NormalizedInboundMessage = {
     media: any | null;
   };
 };
+
+/** Extract national/international digits from a phone JID (`user@s.whatsapp.net`). */
+export function phoneDigitsFromPnJid(jid: string | undefined | null): string | null {
+  if (!jid) return null;
+  const at = jid.indexOf('@');
+  const user = at === -1 ? jid : jid.slice(0, at);
+  const domain = at === -1 ? 's.whatsapp.net' : jid.slice(at + 1);
+  if (domain !== 's.whatsapp.net') return null;
+  const digits = user.replace(/\D/g, '');
+  return digits.length > 0 ? digits : null;
+}
+
+type MessageKeyWithPn = {
+  participant?: string;
+  participantAlt?: string;
+  senderPn?: string;
+  remoteJid?: string;
+  remoteJidAlt?: string;
+};
+
+/**
+ * Phone digits for display only. Does not affect reply routing (`from` stays on LID when needed).
+ */
+export function resolveFromPhone(key: proto.IMessageKey | undefined, from: string): string | null {
+  const k = (key ?? {}) as MessageKeyWithPn;
+  const candidates = [
+    k.senderPn,
+    k.remoteJidAlt,
+    k.participantAlt,
+    from.endsWith('@s.whatsapp.net') ? from : null,
+    k.remoteJid?.endsWith('@s.whatsapp.net') ? k.remoteJid : null,
+    k.participant?.endsWith('@s.whatsapp.net') ? k.participant : null
+  ];
+  for (const jid of candidates) {
+    const phone = phoneDigitsFromPnJid(jid);
+    if (phone) return phone;
+  }
+  return null;
+}
 
 /**
  * Resolve the canonical "from" JID for replying.
@@ -74,6 +116,7 @@ export function normalizeInboundMessage(params: {
   const m = params.message;
   const messageId = m.key?.id ?? '';
   const from = resolveFromJid(m.key ?? undefined);
+  const fromPhone = resolveFromPhone(m.key ?? undefined, from);
   const to = params.deviceJid;
   const timestamp = typeof m.messageTimestamp === 'number' ? m.messageTimestamp : (m.messageTimestamp as any)?.toNumber?.() ?? null;
 
@@ -93,6 +136,7 @@ export function normalizeInboundMessage(params: {
     kind: 'inbound_message',
     messageId,
     from,
+    fromPhone,
     to,
     timestamp,
     content: { type, text, media }
