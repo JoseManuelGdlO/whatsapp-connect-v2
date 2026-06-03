@@ -253,6 +253,7 @@ export class SessionManager {
           sendDeviceDisconnectAlert(deviceId, errorMessage, {
             label: device?.label ?? undefined,
             tenantId: device?.tenantId ?? undefined,
+            severity: statusCode !== DisconnectReason.loggedOut ? 'info' : 'error',
             logContext: { statusCode, reason, willReconnect: statusCode !== DisconnectReason.loggedOut }
           }).catch(() => {});
 
@@ -289,7 +290,8 @@ export class SessionManager {
         const updateErrMsg = `connection.update_error: ${err?.message ?? 'unknown'}`;
         sendDeviceDisconnectAlert(deviceId, updateErrMsg, {
           label: device?.label ?? undefined,
-          tenantId: device?.tenantId ?? undefined
+          tenantId: device?.tenantId ?? undefined,
+          severity: 'error'
         }).catch(() => {});
       }
     });
@@ -339,7 +341,9 @@ export class SessionManager {
         }).catch(() => {});
         sendDeviceDisconnectAlert(deviceId, lastErrorSessionSync, {
           label: device?.label ?? undefined,
-          tenantId: device?.tenantId ?? undefined
+          tenantId: device?.tenantId ?? undefined,
+          severity: 'info',
+          logContext: { willReconnect: true }
         }).catch(() => {});
 
         // Disconnect and reconnect to reset session state

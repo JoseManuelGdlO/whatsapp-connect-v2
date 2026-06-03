@@ -5,6 +5,26 @@ const ALERT_TIMEOUT_MS = 5000;
 /** No enviar otra alerta del mismo dispositivo antes de este tiempo (evita inundar el correo). */
 const DEVICE_ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hora
 
+export type DeviceAlertSeverity = 'debug' | 'info' | 'warn' | 'error';
+
+const SEVERITY_ORDER: Record<DeviceAlertSeverity, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3
+};
+
+function parseMinAlertLevel(): DeviceAlertSeverity {
+  const raw = (process.env.DEVICE_ALERT_MIN_LEVEL ?? 'error').toLowerCase();
+  if (raw in SEVERITY_ORDER) return raw as DeviceAlertSeverity;
+  return 'error';
+}
+
+/** True if an alert at this severity should be emailed given DEVICE_ALERT_MIN_LEVEL. */
+export function shouldSendDeviceAlert(severity: DeviceAlertSeverity): boolean {
+  return SEVERITY_ORDER[severity] >= SEVERITY_ORDER[parseMinAlertLevel()];
+}
+
 function isConfigured(): boolean {
   const to = process.env.ALERT_EMAIL_TO;
   const host = process.env.SMTP_HOST;
@@ -74,10 +94,16 @@ export interface DeviceDisconnectContext {
 /** Por dispositivo: timestamp del último correo enviado (para no repetir el mismo error). */
 const lastDeviceAlertAt = new Map<string, number>();
 
+/** Reset cooldown state (tests only). */
+export function resetDeviceAlertStateForTests(): void {
+  lastDeviceAlertAt.clear();
+}
+
 /**
  * Send an alert when a device is disconnected or has been disconnected.
  * Includes reason and log reference.
  * Solo envía un correo por dispositivo como máximo cada 1 hora (evita inundar).
+ * Respeta DEVICE_ALERT_MIN_LEVEL: eventos por debajo del umbral no envían correo ni consumen cooldown.
  */
 export async function sendDeviceDisconnectAlert(
   deviceId: string,
@@ -85,10 +111,15 @@ export async function sendDeviceDisconnectAlert(
   options?: {
     label?: string | null;
     tenantId?: string | null;
+    severity?: DeviceAlertSeverity;
     logContext?: DeviceDisconnectContext;
   }
 ): Promise<void> {
   if (!isConfigured()) return;
+
+  const severity = options?.severity ?? 'error';
+  if (!shouldSendDeviceAlert(severity)) return;
+
   const now = Date.now();
   const last = lastDeviceAlertAt.get(deviceId) ?? 0;
   if (now - last < DEVICE_ALERT_COOLDOWN_MS) return;
@@ -99,6 +130,7 @@ export async function sendDeviceDisconnectAlert(
   const lines = [
     `Dispositivo: ${label ?? deviceId} (${deviceId})`,
     `Tenant: ${tenantId ?? '—'}`,
+    `Severidad: ${severity}`,
     `Razón del fallo: ${reason}`
   ];
   if (logContext) {
