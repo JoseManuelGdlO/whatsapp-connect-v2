@@ -204,17 +204,31 @@ export function DevicesPage() {
               >
                 {connecting ? 'Conectando...' : 'Connect'}
               </button>
-              <button onClick={async () => apiJson(`/devices/${selected.id}/disconnect`, token!, { method: 'POST' })}>
-                Disconnect
-              </button>
               <button
+                title="La sesión sigue guardada; al reiniciar el worker puede reconectarse solo."
                 onClick={async () => {
                   await apiJson(`/devices/${selected.id}/disconnect`, token!, { method: 'POST' });
-                  await apiJson(`/devices/${selected.id}/reset-session`, token!, { method: 'POST' });
-                  alert('Session reset. Ahora vuelve a Connect para un QR nuevo.');
+                  alert('Conexión pausada. La sesión sigue guardada.');
                 }}
               >
-                Reset session
+                Pausar conexión
+              </button>
+              <button
+                title="Borra la vinculación; hará falta escanear QR de nuevo."
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
+                    )
+                  ) {
+                    return;
+                  }
+                  await apiJson(`/devices/${selected.id}/disconnect`, token!, { method: 'POST' });
+                  await apiJson(`/devices/${selected.id}/reset-session`, token!, { method: 'POST' });
+                  alert('WhatsApp desvinculado. Escanea un QR nuevo para conectar.');
+                }}
+              >
+                Desvincular WhatsApp (borrar sesión)
               </button>
               <button
                 onClick={async () => {
@@ -226,16 +240,16 @@ export function DevicesPage() {
                     );
                     alert(
                       res.clearedCount > 0
-                        ? `Sesiones de ${res.clearedCount} contacto(s) reiniciadas. Si tenían "No matching sessions", que reenvíen el mensaje.`
-                        : 'Listo. No había contactos recientes para reiniciar.'
+                        ? `Cifrado reiniciado para ${res.clearedCount} chat(s). Si veían "No matching sessions", que reenvíen el mensaje.`
+                        : 'Listo. No había chats recientes en el historial para reparar.'
                     );
                   } catch (err: unknown) {
-                    alert(`Error: ${err instanceof Error ? err.message : 'No se pudieron reiniciar sesiones'}`);
+                    alert(`Error: ${err instanceof Error ? err.message : 'No se pudo reparar el cifrado de chats'}`);
                   }
                 }}
-                title="Reinicia las sesiones de cifrado de los contactos que te escribieron"
+                title="Reinicia claves de cifrado por chat (errores de lectura). No desvincula el dispositivo."
               >
-                Reset sesiones por contacto
+                Reparar cifrado de chats
               </button>
               {selected.status === 'QR' && (
                 <button
@@ -295,7 +309,7 @@ export function DevicesPage() {
               <div className="error">
                 <strong>Error:</strong> {selected.lastError}
                 <br />
-                <small>Intenta hacer "Reset session" y luego "Connect" de nuevo.</small>
+                <small>Prueba &quot;Desvincular WhatsApp (borrar sesión)&quot; y luego &quot;Connect&quot; de nuevo.</small>
               </div>
             ) : selected.lastError ? (
               <div className="error">Error: {selected.lastError}</div>

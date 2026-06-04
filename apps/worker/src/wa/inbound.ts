@@ -21,6 +21,24 @@ export type MessagesUpsertResult = {
   clearSenderAndReconnect?: { remoteJid: string; senderPn?: string };
 };
 
+const DEFAULT_INBOUND_MAX_AGE_MS = 86_400_000; // 1 día
+
+/** Máxima antigüedad de mensajes entrantes a procesar. `WORKER_INBOUND_MAX_AGE_MS=0` desactiva el filtro. */
+export function getInboundMaxAgeMs(): number {
+  const raw = process.env.WORKER_INBOUND_MAX_AGE_MS;
+  if (raw === undefined || raw === '') return DEFAULT_INBOUND_MAX_AGE_MS;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_INBOUND_MAX_AGE_MS;
+}
+
+function getMessageTimestampMs(msg: proto.IWebMessageInfo, fallbackMs: number): number {
+  const ts = msg.messageTimestamp;
+  if (typeof ts === 'number') return ts * 1000;
+  const asNumber = (ts as { toNumber?: () => number } | undefined)?.toNumber?.();
+  if (typeof asNumber === 'number') return asNumber * 1000;
+  return fallbackMs;
+}
+
 /**
  * Procesa mensajes entrantes (messages.upsert de Baileys).
  * Filtra fromMe y status; envía composing y readMessages; normaliza; crea Event (message.inbound);
@@ -51,12 +69,23 @@ export async function handleMessagesUpsert(params: {
     // No procesar Status (historias); el bot no debe responder ahí
     if (key.remoteJid === 'status@broadcast') continue;
 
-    console.log('[paso-1] Mensaje recibido', { messageId: key.id, remoteJid: key.remoteJid, deviceId: params.deviceId });
     const messageReceivedAt = Date.now();
-    const messageTimestamp = typeof msg.messageTimestamp === 'number' 
-      ? msg.messageTimestamp * 1000 
-      : (msg.messageTimestamp as any)?.toNumber?.() ? (msg.messageTimestamp as any).toNumber() * 1000 
-      : messageReceivedAt;
+    const messageTimestamp = getMessageTimestampMs(msg, messageReceivedAt);
+    const maxAgeMs = getInboundMaxAgeMs();
+    if (maxAgeMs > 0) {
+      const ageMs = messageReceivedAt - messageTimestamp;
+      if (ageMs > maxAgeMs) {
+        console.log('[inbound-skip-stale]', {
+          messageId: key.id,
+          ageMs,
+          maxAgeMs,
+          deviceId: params.deviceId
+        });
+        continue;
+      }
+    }
+
+    console.log('[paso-1] Mensaje recibido', { messageId: key.id, remoteJid: key.remoteJid, deviceId: params.deviceId });
 
     // Send "typing" presence FIRST so user sees "escribiendo..." immediately (reduces "Esperando el mensaje")
     const remoteJid = key.remoteJid;

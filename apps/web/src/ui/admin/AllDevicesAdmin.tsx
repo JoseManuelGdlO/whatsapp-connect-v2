@@ -75,9 +75,9 @@ export function AllDevicesAdmin({ token }: { token: string }) {
       await apiJson(`/devices/${device.id}/disconnect`, token, { method: 'POST' });
       const d = await apiJson<Device>(`/devices/${device.id}/status`, token);
       updateDeviceInTenant(tenantId, normalizeDevice(d));
-      setMsg(`Sesión cerrada en "${device.label}".`);
+      setMsg(`Conexión pausada en "${device.label}". La sesión sigue guardada.`);
     } catch (err: unknown) {
-      setMsg(`Error al cerrar sesión: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+      setMsg(`Error al pausar conexión: ${err instanceof Error ? err.message : 'Error desconocido'}`);
     } finally {
       setDeviceActionLoading(null);
     }
@@ -86,15 +86,22 @@ export function AllDevicesAdmin({ token }: { token: string }) {
   const handleResetSession = async (device: Device) => {
     const tenantId = device.tenantId;
     if (!tenantId) return;
+    if (
+      !confirm(
+        '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
+      )
+    ) {
+      return;
+    }
     setDeviceActionLoading(device.id);
     try {
       await apiJson(`/devices/${device.id}/disconnect`, token, { method: 'POST' });
       await apiJson(`/devices/${device.id}/reset-session`, token, { method: 'POST' });
       const list = await apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantId)}`, token);
       setDevicesByTenant((prev) => ({ ...prev, [tenantId]: list.map(normalizeDevice) }));
-      setMsg(`Sesión reiniciada en "${device.label}". Pulsa Conectar para nuevo QR.`);
+      setMsg(`WhatsApp desvinculado en "${device.label}". Escanea un QR nuevo para conectar.`);
     } catch (err: unknown) {
-      setMsg(`Error: ${err instanceof Error ? err.message : 'No se pudo reiniciar sesión'}`);
+      setMsg(`Error: ${err instanceof Error ? err.message : 'No se pudo desvincular WhatsApp'}`);
     } finally {
       setDeviceActionLoading(null);
     }
@@ -110,11 +117,11 @@ export function AllDevicesAdmin({ token }: { token: string }) {
       );
       setMsg(
         res.clearedCount > 0
-          ? `Sesiones de ${res.clearedCount} contacto(s) reiniciadas en "${device.label}". Si tenían "No matching sessions", que reenvíen el mensaje.`
-          : `Listo. No había contactos recientes para reiniciar en "${device.label}".`
+          ? `Cifrado reiniciado para ${res.clearedCount} chat(s) en "${device.label}". Si veían "No matching sessions", que reenvíen el mensaje.`
+          : `Listo. No había chats recientes para reparar en "${device.label}".`
       );
     } catch (err: unknown) {
-      setMsg(`Error: ${err instanceof Error ? err.message : 'No se pudieron reiniciar sesiones por contacto'}`);
+      setMsg(`Error: ${err instanceof Error ? err.message : 'No se pudo reparar el cifrado de chats'}`);
     } finally {
       setDeviceActionLoading(null);
     }
@@ -162,7 +169,7 @@ export function AllDevicesAdmin({ token }: { token: string }) {
       <div className="card">
         <h3>Todos los dispositivos</h3>
         <p className="muted">
-          {tenants.length} cliente(s), {totalDevices} dispositivo(s). Conectar, Reconectar, Desconectar, Reset connection, Ping.
+          {tenants.length} cliente(s), {totalDevices} dispositivo(s). Conectar, Reconectar, Pausar conexión, Desvincular WhatsApp, Ping.
         </p>
         {msg ? <div className="muted" style={{ marginTop: 8 }}>{msg}</div> : null}
         <div className="actions" style={{ marginTop: 8 }}>
@@ -205,27 +212,29 @@ export function AllDevicesAdmin({ token }: { token: string }) {
                       <button
                         type="button"
                         disabled={deviceActionLoading === d.id}
+                        title="La sesión sigue guardada; al reiniciar el worker puede reconectarse solo."
                         onClick={() => handleLogout(d)}
                         style={{ padding: '4px 8px', fontSize: '12px' }}
                       >
-                        Desconectar
+                        Pausar conexión
                       </button>
                       <button
                         type="button"
                         disabled={deviceActionLoading === d.id}
+                        title="Borra la vinculación; hará falta escanear QR de nuevo."
                         onClick={() => handleResetSession(d)}
                         style={{ padding: '4px 8px', fontSize: '12px' }}
                       >
-                        Reset connection
+                        Desvincular WhatsApp (borrar sesión)
                       </button>
                       <button
                         type="button"
                         disabled={deviceActionLoading === d.id}
                         onClick={() => handleResetSenderSessions(d)}
                         style={{ padding: '4px 8px', fontSize: '12px' }}
-                        title="Reinicia las sesiones de cifrado de los contactos que te escribieron (útil si ven &quot;No matching sessions&quot;)"
+                        title="Reinicia claves de cifrado por chat (errores de lectura). No desvincula el dispositivo."
                       >
-                        Reset sesiones por contacto
+                        Reparar cifrado de chats
                       </button>
                     </div>
                     <div style={{ width: '100%', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 4, paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>

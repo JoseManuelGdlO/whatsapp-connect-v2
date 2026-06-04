@@ -11,6 +11,7 @@ Al arrancar, el worker reconecta **todos los dispositivos que tienen sesión gua
 - **`WORKER_RECONNECT_ALL_DELAY_MS`** (opcional): milisegundos de espera antes de empezar las reconexiones (por defecto 5000).
 - **`WORKER_RECONNECT_STAGGER_MS`** (opcional): milisegundos entre cada reconexión para no saturar (por defecto 800). Con ~20 dispositivos son unos 16 s en total.
 - **`WORKER_INBOUND_ACK_MESSAGE`** (opcional): si está definido, el worker envía este texto como mensaje automático al recibir cada mensaje entrante. Sirve para "resetear" la conversación y evitar que WhatsApp muestre "Esperando el mensaje" cuando el error persiste (ej. `Un momento, te respondo en seguida.`).
+- **`WORKER_INBOUND_MAX_AGE_MS`** (opcional): antigüedad máxima de mensajes entrantes a procesar (webhooks, composing, ack). Por defecto `86400000` (1 día). `0` desactiva el filtro (útil en desarrollo).
 - **`WORKER_COMPOSING_BEFORE_SEND_MS`** (opcional): milisegundos que se muestra "escribiendo..." antes de enviar cada respuesta (por defecto 1500).
 
 ## Responsabilidad

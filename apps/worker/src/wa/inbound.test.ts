@@ -55,6 +55,7 @@ vi.mock('@wc/logger', () => {
 describe('handleMessagesUpsert', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     queueAddMock.mockResolvedValue({ id: 'job-1' });
   });
 
@@ -259,6 +260,100 @@ describe('handleMessagesUpsert', () => {
             remoteJid: '5216183610698@s.whatsapp.net',
             fromMe: false
           }
+        }
+      ] as any
+    });
+
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignora mensajes con messageTimestamp de más de 1 día', async () => {
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216183610698@s.whatsapp.net',
+      content: { type: 'text', text: 'viejo' }
+    });
+
+    const twoDaysAgoSec = Math.floor((Date.now() - 2 * 86_400_000) / 1000);
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    const sock = {
+      user: { id: 'me@s.whatsapp.net' },
+      sendPresenceUpdate: vi.fn(async () => {}),
+      readMessages: vi.fn(async () => {})
+    } as any;
+
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock,
+      messages: [
+        {
+          key: {
+            id: 'stale-1',
+            remoteJid: '5216183610698@s.whatsapp.net',
+            fromMe: false
+          },
+          messageTimestamp: twoDaysAgoSec
+        }
+      ] as any
+    });
+
+    expect(queueAddMock).not.toHaveBeenCalled();
+    expect(sock.sendPresenceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('procesa mensajes recientes con messageTimestamp explícito', async () => {
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216183610698@s.whatsapp.net',
+      content: { type: 'text', text: 'reciente' }
+    });
+
+    const oneHourAgoSec = Math.floor((Date.now() - 3_600_000) / 1000);
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock: {
+        user: { id: 'me@s.whatsapp.net' },
+        sendPresenceUpdate: vi.fn(async () => {}),
+        readMessages: vi.fn(async () => {})
+      } as any,
+      messages: [
+        {
+          key: {
+            id: 'fresh-1',
+            remoteJid: '5216183610698@s.whatsapp.net',
+            fromMe: false
+          },
+          messageTimestamp: oneHourAgoSec
+        }
+      ] as any
+    });
+
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('procesa mensajes viejos cuando WORKER_INBOUND_MAX_AGE_MS=0', async () => {
+    vi.stubEnv('WORKER_INBOUND_MAX_AGE_MS', '0');
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216183610698@s.whatsapp.net',
+      content: { type: 'text', text: 'viejo-permitido' }
+    });
+
+    const twoDaysAgoSec = Math.floor((Date.now() - 2 * 86_400_000) / 1000);
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock: {
+        user: { id: 'me@s.whatsapp.net' },
+        sendPresenceUpdate: vi.fn(async () => {}),
+        readMessages: vi.fn(async () => {})
+      } as any,
+      messages: [
+        {
+          key: {
+            id: 'stale-allowed',
+            remoteJid: '5216183610698@s.whatsapp.net',
+            fromMe: false
+          },
+          messageTimestamp: twoDaysAgoSec
         }
       ] as any
     });

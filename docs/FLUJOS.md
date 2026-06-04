@@ -32,7 +32,7 @@ sequenceDiagram
 | Paso | Archivo / lógica | Qué hace | Si falla |
 |------|------------------|----------|----------|
 | 1 | `apps/worker/src/wa/sessionManager.ts` — listener `messages.upsert` | Recibe el mensaje de Baileys y llama a `handleMessagesUpsert` | Sesión desconectada; Device.status ERROR; lastError en BD; logs "SessionError", "decrypt" |
-| 2 | `apps/worker/src/wa/inbound.ts` — `handleMessagesUpsert` | Filtra fromMe/status; envía composing; readMessages; normaliza | "Esperando el mensaje": retraso; ver processingTimeMs en logs; stub/decryption → clearSenderAndReconnect |
+| 2 | `apps/worker/src/wa/inbound.ts` — `handleMessagesUpsert` | Filtra fromMe/status y mensajes con antigüedad &gt; `WORKER_INBOUND_MAX_AGE_MS` (default 1 día); envía composing; readMessages; normaliza | Replay al reconectar: log `[inbound-skip-stale]`; "Esperando el mensaje": retraso; stub/decryption → clearSenderAndReconnect |
 | 3 | `apps/worker/src/wa/normalize.ts` — `normalizeInboundMessage` | Convierte proto a `normalized` (from, content.text, etc.) | Texto vacío: log `[inbound-inspect]` rawMessageKeys; tipos no soportados |
 | 4 | `apps/worker/src/wa/inbound.ts` | `prisma.event.create`; por cada endpoint `webhookDelivery.create` + `webhookQueue.add('deliver', { deliveryId })` | Event no creado: excepción en worker; delivery no encolada: Redis caído o worker sin Redis |
 | 5 | `apps/worker/src/queues/webhookDispatch.ts` | Job: fetch al endpoint con headers y firma; actualiza WebhookDelivery SUCCESS/FAILED/DLQ | 4xx/5xx o timeout: WebhookDelivery.lastError, nextRetryAt; DLQ = sin más reintentos; log "Webhook delivery failed" |
@@ -80,9 +80,9 @@ sequenceDiagram
 | Acción | Quién | Cola | Worker / lógica |
 |--------|--------|------|------------------|
 | Conectar | API `POST /devices/:id/connect` | `device_commands` job `connect` | `apps/worker/src/queues/deviceCommands.ts` → `sessionManager.connect(deviceId)` |
-| Desconectar | API `POST /devices/:id/disconnect` o DELETE device | `device_commands` job `disconnect` | `sessionManager.disconnect(deviceId)` |
-| Reset sesión | API `POST /devices/:id/reset-session` | — (no cola) | Borra WaSession y pone device OFFLINE en API |
-| Reset sender sessions | API `POST /devices/:id/reset-sender-sessions` | `device_commands` job `reset-sender-sessions` | `apps/worker/src/wa/authStateDb.ts` — `clearSessionsForJids(deviceId, jids)` |
+| Pausar conexión (UI) | API `POST /devices/:id/disconnect` o DELETE device | `device_commands` job `disconnect` | `sessionManager.disconnect(deviceId)` — **la sesión en BD sigue** |
+| Desvincular WhatsApp (UI) | API `POST /devices/:id/reset-session` (tras disconnect) | — (no cola) | Borra WaSession y pone device OFFLINE en API |
+| Reparar cifrado de chats (UI) | API `POST /devices/:id/reset-sender-sessions` | `device_commands` job `reset-sender-sessions` | `apps/worker/src/wa/authStateDb.ts` — `clearSessionsForJids(deviceId, jids)` |
 
 **Al arrancar el worker:** tras un delay, `deviceCommands.ts` ejecuta `reconnectAllInitializedDevices`: reconecta todos los dispositivos que tienen `WaSession` en BD.
 

@@ -85,6 +85,7 @@ API y Worker deben usar el **mismo REDIS_URL**.
 | **WORKER_RECONNECT_ALL_DELAY_MS** | Worker | Delay antes de reconectar dispositivos al arrancar (default 5000). |
 | **WORKER_RECONNECT_STAGGER_MS** | Worker | Milisegundos entre cada reconexión (default 5000). |
 | **WORKER_INBOUND_ACK_MESSAGE** | Worker | Opcional: mensaje automático al recibir cada inbound (evita "Esperando el mensaje"). |
+| **WORKER_INBOUND_MAX_AGE_MS** | Worker | Antigüedad máxima de inbound a procesar (default 86400000 = 1 día; `0` = sin filtro). |
 | **WORKER_COMPOSING_BEFORE_SEND_MS** | Worker | Milisegundos "escribiendo..." antes de enviar (default 1500). |
 | **FRONTEND_URL** | API | Base URL del frontend (links públicos QR). |
 | **ENV_FILE** | API, Worker | Ruta al archivo de env (ej. `env.local`). |
