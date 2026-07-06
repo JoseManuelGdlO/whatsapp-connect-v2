@@ -4,10 +4,26 @@ import type { WASocket, proto } from '@whiskeysockets/baileys';
 import { prisma } from '../lib/prisma.js';
 import { loadAuthState } from './authStateDb.js';
 import { handleMessagesUpsert } from './inbound.js';
+import { phoneDigitsFromPnJid } from './normalize.js';
 import { createLogger } from '@wc/logger';
 import { sendDeviceDisconnectAlert } from '@wc/alert';
 
 const logger = createLogger(prisma, 'worker');
+
+/** Returns phoneHint to persist, or null if sock has no PN or value is unchanged. */
+async function phoneHintIfChanged(
+  deviceId: string,
+  userJid: string | null | undefined
+): Promise<string | null> {
+  const nextHint = phoneDigitsFromPnJid(userJid ?? null);
+  if (!nextHint) return null;
+  const current = await prisma.device.findUnique({
+    where: { id: deviceId },
+    select: { phoneHint: true }
+  });
+  if (current?.phoneHint === nextHint) return null;
+  return nextHint;
+}
 
 type SessionEntry = {
   socket: WASocket;
@@ -212,9 +228,23 @@ export class SessionManager {
 
         if (connection === 'open') {
           this.reconnectAttempts.set(deviceId, 0); // Reset backoff on successful connect
+          const openData: {
+            status: 'ONLINE';
+            qr: null;
+            lastSeenAt: Date;
+            lastError: null;
+            phoneHint?: string;
+          } = {
+            status: 'ONLINE',
+            qr: null,
+            lastSeenAt: new Date(),
+            lastError: null
+          };
+          const phoneHint = await phoneHintIfChanged(deviceId, sock.user?.id);
+          if (phoneHint) openData.phoneHint = phoneHint;
           await prisma.device.update({
             where: { id: deviceId },
-            data: { status: 'ONLINE', qr: null, lastSeenAt: new Date(), lastError: null }
+            data: openData
           });
           
           // Expire all active public QR links for this device
@@ -460,6 +490,27 @@ export class SessionManager {
 
   get(deviceId: string) {
     return this.sessions.get(deviceId)?.socket ?? null;
+  }
+
+  /** Backfill phoneHint from active sockets (e.g. devices already ONLINE before deploy). */
+  async syncPhoneHintsForActiveSessions(): Promise<void> {
+    let updated = 0;
+    // Snapshot entries so concurrent connect/disconnect cannot skip devices mid-iteration.
+    for (const [deviceId, entry] of [...this.sessions.entries()]) {
+      if (entry.closing) continue;
+      const phoneHint = await phoneHintIfChanged(deviceId, entry.socket.user?.id);
+      if (!phoneHint) continue;
+      await prisma.device.update({
+        where: { id: deviceId },
+        data: { phoneHint }
+      });
+      updated++;
+    }
+    if (updated > 0) {
+      await logger
+        .info(`[worker] Backfilled phoneHint for ${updated} device(s)`, { metadata: { updated } })
+        .catch(() => {});
+    }
   }
 }
 

@@ -60,7 +60,9 @@ export function phoneDigitsFromPnJid(jid: string | undefined | null): string | n
   const user = at === -1 ? jid : jid.slice(0, at);
   const domain = at === -1 ? 's.whatsapp.net' : jid.slice(at + 1);
   if (domain !== 's.whatsapp.net') return null;
-  const digits = user.replace(/\D/g, '');
+  // Multi-device JIDs: 5216182327598:22@s.whatsapp.net — device suffix is not part of the phone
+  const phonePart = user.split(':')[0] ?? user;
+  const digits = phonePart.replace(/\D/g, '');
   return digits.length > 0 ? digits : null;
 }
 

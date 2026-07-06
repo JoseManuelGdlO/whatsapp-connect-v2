@@ -2,6 +2,7 @@ export type Device = {
   id: string;
   tenantId?: string;
   label: string;
+  phoneHint?: string | null;
   status: string;
   qr: string | null;
   lastError: string | null;

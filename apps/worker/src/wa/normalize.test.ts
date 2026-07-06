@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import type { proto } from '@whiskeysockets/baileys';
 
 import { normalizeInboundMessage, phoneDigitsFromPnJid, resolveFromPhone } from './normalize.js';
+
+/** Baileys v7 message keys may include PN fields not yet on IMessageKey. */
+type TestMessageKey = proto.IMessageKey & {
+  senderPn?: string;
+  remoteJidAlt?: string;
+  participantAlt?: string;
+};
 
 describe('phoneDigitsFromPnJid', () => {
   it('extrae dígitos de un JID PN', () => {
@@ -9,6 +17,10 @@ describe('phoneDigitsFromPnJid', () => {
 
   it('ignora JIDs que no son PN', () => {
     expect(phoneDigitsFromPnJid('60911863783463@lid')).toBeNull();
+  });
+
+  it('ignora el sufijo :device en JIDs multi-device', () => {
+    expect(phoneDigitsFromPnJid('5216182327598:22@s.whatsapp.net')).toBe('5216182327598');
   });
 });
 
@@ -19,7 +31,7 @@ describe('resolveFromPhone', () => {
         {
           remoteJid: '60911863783463@lid',
           senderPn: '5216183610698@s.whatsapp.net'
-        },
+        } as TestMessageKey,
         '60911863783463@lid'
       )
     ).toBe('5216183610698');
@@ -31,7 +43,7 @@ describe('resolveFromPhone', () => {
         {
           remoteJid: '60911863783463@lid',
           remoteJidAlt: '5216183610698@s.whatsapp.net'
-        },
+        } as TestMessageKey,
         '60911863783463@lid'
       )
     ).toBe('5216183610698');
@@ -52,7 +64,7 @@ describe('normalizeInboundMessage', () => {
           remoteJid: '60911863783463@lid',
           senderPn: '5216183610698@s.whatsapp.net',
           fromMe: false
-        },
+        } as TestMessageKey,
         message: { conversation: 'hola' },
         messageTimestamp: 1736900000
       }
@@ -71,7 +83,7 @@ describe('normalizeInboundMessage', () => {
           remoteJid: '5216183610698@s.whatsapp.net',
           senderPn: '5216183610698@s.whatsapp.net',
           fromMe: false
-        },
+        } as TestMessageKey,
         message: { conversation: 'hola' }
       }
     });

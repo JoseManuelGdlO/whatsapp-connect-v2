@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import { apiJson } from '../../api/client';
 import { useTenantId } from '../../hooks';
@@ -22,18 +22,29 @@ export function DevicesPage() {
   const [testText, setTestText] = useState('ping');
   const [outbound, setOutbound] = useState<OutboundMessage[]>([]);
 
+  const loadDevices = useCallback(async () => {
+    if (!token || !tenantId) return;
+    try {
+      const devices = await apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantId)}`, token);
+      const devicesWithLabels = devices.map((d) => ({
+        ...d,
+        label: d.label || 'Device sin nombre'
+      }));
+      setDevices(devicesWithLabels);
+    } catch {
+      // ignore
+    }
+  }, [token, tenantId]);
+
+  useEffect(() => {
+    void loadDevices();
+  }, [loadDevices]);
+
   useEffect(() => {
     if (!token || !tenantId) return;
-    apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantId)}`, token)
-      .then((devices) => {
-        const devicesWithLabels = devices.map((d) => ({
-          ...d,
-          label: d.label || 'Device sin nombre'
-        }));
-        setDevices(devicesWithLabels);
-      })
-      .catch(() => {});
-  }, [token, tenantId]);
+    const t = setInterval(() => void loadDevices(), 5000);
+    return () => clearInterval(t);
+  }, [token, tenantId, loadDevices]);
 
   useEffect(() => {
     if (!token || !tenantId || !selectedId) return;
@@ -129,6 +140,7 @@ export function DevicesPage() {
                   </div>
                   <div style={{ fontSize: '11px', color: '#475569', marginBottom: '2px', wordBreak: 'break-all' }}>
                     ID: {d.id}
+                    {d.phoneHint ? ` · PhoneHint: ${d.phoneHint}` : ''}
                   </div>
                   <div className="rowMeta" style={{ fontSize: '12px', color: '#64748b' }}>
                     {d.status}

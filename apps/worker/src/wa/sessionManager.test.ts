@@ -7,7 +7,7 @@ const hoisted = vi.hoisted(() => {
   const makeSocket = () => {
     const handlers: Record<string, Array<(...args: any[]) => any>> = {};
     const socket = {
-      user: { id: 'me@s.whatsapp.net' },
+      user: { id: '5216183610698@s.whatsapp.net' },
       ev: {
         on: (event: string, cb: (...args: any[]) => any) => {
           handlers[event] ||= [];
@@ -31,7 +31,18 @@ const hoisted = vi.hoisted(() => {
     clearSenderSessionsInMemoryMock: vi.fn(),
     saveMock: vi.fn(async () => {}),
     saveImmediateMock: vi.fn(async () => {}),
-    prismaDeviceUpdateMock: vi.fn(async () => ({}))
+    prismaDeviceUpdateMock: vi.fn(async () => ({})),
+    prismaDeviceFindUniqueMock: vi.fn(async ({ where }: any): Promise<{
+      id: string;
+      tenantId: string;
+      label: string;
+      phoneHint: string | null;
+    }> => ({
+      id: where.id,
+      tenantId: 'tenant-1',
+      label: 'Device 1',
+      phoneHint: null
+    }))
   };
 });
 
@@ -60,11 +71,7 @@ vi.mock('../lib/prisma.js', () => {
     prisma: {
       device: {
         update: hoisted.prismaDeviceUpdateMock,
-        findUnique: vi.fn(async ({ where }: any) => ({
-          id: where.id,
-          tenantId: 'tenant-1',
-          label: 'Device 1'
-        }))
+        findUnique: hoisted.prismaDeviceFindUniqueMock
       },
       publicQrLink: {
         updateMany: vi.fn(async () => ({}))
@@ -107,6 +114,12 @@ describe('SessionManager', () => {
       save: hoisted.saveMock,
       clearCorruptedSessions: hoisted.clearCorruptedSessionsMock,
       clearSenderSessionsInMemory: hoisted.clearSenderSessionsInMemoryMock
+    }));
+    hoisted.prismaDeviceFindUniqueMock.mockImplementation(async ({ where }: any) => ({
+      id: where.id,
+      tenantId: 'tenant-1',
+      label: 'Device 1',
+      phoneHint: null
     }));
   });
 
@@ -226,5 +239,70 @@ describe('SessionManager', () => {
     await vi.advanceTimersByTimeAsync(60000);
     expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(1);
     expect(manager.get('device-logged-out-data')).toBeNull();
+  });
+
+  it('guarda phoneHint al abrir conexión cuando aún no existe', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-phone-hint');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    expect(onConnectionUpdate).toBeDefined();
+
+    await onConnectionUpdate?.({ connection: 'open' });
+
+    expect(hoisted.prismaDeviceUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'device-phone-hint' },
+        data: expect.objectContaining({
+          status: 'ONLINE',
+          phoneHint: '5216183610698'
+        })
+      })
+    );
+  });
+
+  it('no reescribe phoneHint si ya coincide con el número conectado', async () => {
+    hoisted.prismaDeviceFindUniqueMock.mockImplementation(async ({ where }: any) => ({
+      id: where.id,
+      tenantId: 'tenant-1',
+      label: 'Device 1',
+      phoneHint: '5216183610698'
+    }));
+
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-phone-hint-same');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    expect(onConnectionUpdate).toBeDefined();
+
+    await onConnectionUpdate?.({ connection: 'open' });
+
+    const wrotePhoneHintOnOpen = (
+      hoisted.prismaDeviceUpdateMock.mock.calls as unknown as Array<
+        [{ data?: { status?: string; phoneHint?: string } }]
+      >
+    ).some((call) => {
+      const data = call[0]?.data;
+      return data?.status === 'ONLINE' && data.phoneHint !== undefined;
+    });
+    expect(wrotePhoneHintOnOpen).toBe(false);
+  });
+
+  it('backfill phoneHint desde sesiones activas sin esperar reconexión', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-backfill');
+
+    hoisted.prismaDeviceUpdateMock.mockClear();
+    await manager.syncPhoneHintsForActiveSessions();
+
+    expect(hoisted.prismaDeviceUpdateMock).toHaveBeenCalledWith({
+      where: { id: 'device-backfill' },
+      data: { phoneHint: '5216183610698' }
+    });
   });
 });

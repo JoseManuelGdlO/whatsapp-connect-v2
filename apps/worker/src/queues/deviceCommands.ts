@@ -91,6 +91,7 @@ export async function reconnectAllInitializedDevices(staggerMs: number = 5000): 
     });
     if (devices.length === 0) {
       await logger.info('[worker] No devices with session to reconnect', {}).catch(() => {});
+      await sessionManager.syncPhoneHintsForActiveSessions();
       return;
     }
     await logger.info(`[worker] Reconnecting ${devices.length} device(s) with session`, {
@@ -114,6 +115,10 @@ export async function reconnectAllInitializedDevices(staggerMs: number = 5000): 
         await new Promise((r) => setTimeout(r, staggerMs));
       }
     }
+
+    await sessionManager.syncPhoneHintsForActiveSessions();
+    const followUpMs = Math.max(devices.length * staggerMs, 15000);
+    setTimeout(() => void sessionManager.syncPhoneHintsForActiveSessions(), followUpMs);
   } catch (err) {
     await logger
       .error('[worker] reconnectAllInitializedDevices failed', err instanceof Error ? err : new Error(String(err)), {})
