@@ -2,6 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const queueAddMock = vi.fn();
 const normalizeInboundMessageMock = vi.fn();
+const trackPendingReadMock = vi.fn(async (..._args: any[]) => {});
+
+vi.mock('./pendingReadBuffer.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./pendingReadBuffer.js')>();
+  return {
+    ...actual,
+    trackPendingRead: (...args: any[]) => trackPendingReadMock(...args)
+  };
+});
 
 vi.mock('bullmq', () => {
   class MockQueue {
@@ -56,6 +65,7 @@ describe('handleMessagesUpsert', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    trackPendingReadMock.mockClear();
     queueAddMock.mockResolvedValue({ id: 'job-1' });
   });
 
@@ -235,6 +245,7 @@ describe('handleMessagesUpsert', () => {
   });
 
   it('continúa procesando cuando readMessages falla (caos de dependencia)', async () => {
+    vi.stubEnv('WORKER_INBOUND_AUTO_READ', 'true');
     normalizeInboundMessageMock.mockReturnValue({
       from: '5216183610698@s.whatsapp.net',
       content: {
@@ -327,6 +338,156 @@ describe('handleMessagesUpsert', () => {
       ] as any
     });
 
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('no llama readMessages por defecto (WORKER_INBOUND_AUTO_READ desactivado)', async () => {
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216183610698@s.whatsapp.net',
+      content: { type: 'text', text: 'hola' }
+    });
+
+    const readMessages = vi.fn(async () => {});
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock: {
+        user: { id: 'me@s.whatsapp.net' },
+        sendPresenceUpdate: vi.fn(async () => {}),
+        readMessages
+      } as any,
+      messages: [
+        {
+          key: {
+            id: 'no-read-1',
+            remoteJid: '5216183610698@s.whatsapp.net',
+            fromMe: false
+          }
+        }
+      ] as any
+    });
+
+    expect(readMessages).not.toHaveBeenCalled();
+    expect(trackPendingReadMock).toHaveBeenCalledTimes(1);
+    expect(queueAddMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('no envía composing por defecto (WORKER_INBOUND_AUTO_COMPOSING desactivado)', async () => {
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216183610698@s.whatsapp.net',
+      content: { type: 'text', text: 'hola' }
+    });
+
+    const sendPresenceUpdate = vi.fn(async () => {});
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock: {
+        user: { id: 'me@s.whatsapp.net' },
+        sendPresenceUpdate,
+        readMessages: vi.fn(async () => {})
+      } as any,
+      messages: [
+        {
+          key: {
+            id: 'no-compose-1',
+            remoteJid: '5216183610698@s.whatsapp.net',
+            fromMe: false
+          }
+        }
+      ] as any
+    });
+
+    expect(sendPresenceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('envía composing cuando WORKER_INBOUND_AUTO_COMPOSING=true', async () => {
+    vi.stubEnv('WORKER_INBOUND_AUTO_COMPOSING', 'true');
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216183610698@s.whatsapp.net',
+      content: { type: 'text', text: 'hola' }
+    });
+
+    const sendPresenceUpdate = vi.fn(async () => {});
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock: {
+        user: { id: 'me@s.whatsapp.net' },
+        sendPresenceUpdate,
+        readMessages: vi.fn(async () => {})
+      } as any,
+      messages: [
+        {
+          key: {
+            id: 'compose-1',
+            remoteJid: '5216183610698@s.whatsapp.net',
+            fromMe: false
+          }
+        }
+      ] as any
+    });
+
+    expect(sendPresenceUpdate).toHaveBeenCalledWith('composing', '5216183610698@s.whatsapp.net');
+  });
+
+  it('no trackea pending read cuando WORKER_OUTBOUND_MARK_READ_ON_SEND=false', async () => {
+    vi.stubEnv('WORKER_OUTBOUND_MARK_READ_ON_SEND', 'false');
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216183610698@s.whatsapp.net',
+      content: { type: 'text', text: 'hola' }
+    });
+
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock: {
+        user: { id: 'me@s.whatsapp.net' },
+        sendPresenceUpdate: vi.fn(async () => {}),
+        readMessages: vi.fn(async () => {})
+      } as any,
+      messages: [
+        {
+          key: {
+            id: 'no-track-1',
+            remoteJid: '5216183610698@s.whatsapp.net',
+            fromMe: false
+          }
+        }
+      ] as any
+    });
+
+    expect(trackPendingReadMock).not.toHaveBeenCalled();
+  });
+
+  it('llama readMessages cuando WORKER_INBOUND_AUTO_READ=true', async () => {
+    vi.stubEnv('WORKER_INBOUND_AUTO_READ', 'true');
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216183610698@s.whatsapp.net',
+      content: { type: 'text', text: 'hola' }
+    });
+
+    const readMessages = vi.fn(async () => {});
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock: {
+        user: { id: 'me@s.whatsapp.net' },
+        sendPresenceUpdate: vi.fn(async () => {}),
+        readMessages
+      } as any,
+      messages: [
+        {
+          key: {
+            id: 'auto-read-1',
+            remoteJid: '5216183610698@s.whatsapp.net',
+            fromMe: false
+          }
+        }
+      ] as any
+    });
+
+    expect(readMessages).toHaveBeenCalledTimes(1);
     expect(queueAddMock).toHaveBeenCalledTimes(1);
   });
 

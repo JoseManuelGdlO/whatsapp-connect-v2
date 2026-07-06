@@ -6,6 +6,15 @@ import { Queue } from 'bullmq';
 import { redis } from '../lib/redis.js';
 import { normalizeInboundMessage } from './normalize.js';
 import { createLogger } from '@wc/logger';
+import { markMessagesRead } from './markMessagesRead.js';
+import {
+  INBOUND_COMPOSING_PAUSE_AFTER_MS,
+  isInboundAutoComposingEnabled
+} from './inboundPresence.js';
+import {
+  isOutboundMarkReadOnSendEnabled,
+  trackPendingRead
+} from './pendingReadBuffer.js';
 
 const webhookQueue = new Queue('webhook_dispatch', { connection: redis });
 const outboundQueue = new Queue('outbound_messages', { connection: redis });
@@ -31,6 +40,11 @@ export function getInboundMaxAgeMs(): number {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_INBOUND_MAX_AGE_MS;
 }
 
+/** Marca automáticamente como leídos los mensajes entrantes (`readMessages`). Por defecto desactivado. */
+export function isInboundAutoReadEnabled(): boolean {
+  return process.env.WORKER_INBOUND_AUTO_READ === 'true';
+}
+
 function getMessageTimestampMs(msg: proto.IWebMessageInfo, fallbackMs: number): number {
   const ts = msg.messageTimestamp;
   if (typeof ts === 'number') return ts * 1000;
@@ -41,7 +55,7 @@ function getMessageTimestampMs(msg: proto.IWebMessageInfo, fallbackMs: number): 
 
 /**
  * Procesa mensajes entrantes (messages.upsert de Baileys).
- * Filtra fromMe y status; envía composing y readMessages; normaliza; crea Event (message.inbound);
+ * Filtra fromMe y status; opcionalmente composing/read en inbound (legacy); normaliza; crea Event (message.inbound);
  * por cada WebhookEndpoint del tenant crea WebhookDelivery y encola job webhook_dispatch.
  * Si el mensaje es stub por fallo de descifrado, puede crear evento de decryptionFailed y devolver
  * clearSenderAndReconnect para que el sessionManager limpie sesiones del remitente.
@@ -87,39 +101,29 @@ export async function handleMessagesUpsert(params: {
 
     console.log('[paso-1] Mensaje recibido', { messageId: key.id, remoteJid: key.remoteJid, deviceId: params.deviceId });
 
-    // Send "typing" presence FIRST so user sees "escribiendo..." immediately (reduces "Esperando el mensaje")
     const remoteJid = key.remoteJid;
-    params.sock.sendPresenceUpdate('composing', remoteJid).catch((err) => {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.warn('Failed to send composing presence on inbound', errorMsg, {
-        deviceId: params.deviceId,
-        tenantId: device.tenantId,
-        metadata: { messageId: key.id, remoteJid, error: errorMsg }
-      }).catch(() => {});
-    });
-    // Clear "typing" after a while if the bot never replies (avoid leaving "escribiendo..." forever)
-    const INBOUND_COMPOSING_PAUSE_AFTER_MS = 25_000;
-    setTimeout(() => {
-      params.sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
-    }, INBOUND_COMPOSING_PAUSE_AFTER_MS);
-
-    // Then acknowledge message (mark as read) so WhatsApp knows we received it
-    try {
-      await params.sock.readMessages([key]).catch((err) => {
+    if (isInboundAutoComposingEnabled()) {
+      params.sock.sendPresenceUpdate('composing', remoteJid).catch((err) => {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        logger.warn('Failed to acknowledge incoming message', errorMsg, {
+        logger.warn('Failed to send composing presence on inbound', errorMsg, {
           deviceId: params.deviceId,
           tenantId: device.tenantId,
-          metadata: { messageId: key.id, remoteJid: key.remoteJid, error: errorMsg }
+          metadata: { messageId: key.id, remoteJid, error: errorMsg }
         }).catch(() => {});
       });
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.warn('Exception while acknowledging message', errorMsg, {
+      setTimeout(() => {
+        params.sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
+      }, INBOUND_COMPOSING_PAUSE_AFTER_MS);
+    }
+
+    if (isInboundAutoReadEnabled()) {
+      await markMessagesRead(params.sock, [key], {
         deviceId: params.deviceId,
         tenantId: device.tenantId,
-        metadata: { messageId: key.id, error: errorMsg }
-      }).catch(() => {});
+        source: 'inbound'
+      });
+    } else if (isOutboundMarkReadOnSendEnabled()) {
+      await trackPendingRead(params.deviceId, key);
     }
 
     const normalized = normalizeInboundMessage({

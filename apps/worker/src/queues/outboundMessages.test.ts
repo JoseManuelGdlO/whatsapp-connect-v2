@@ -2,8 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hoisted = vi.hoisted(() => {
   let processor: ((job: any) => Promise<void>) | null = null;
-  const sendMessageMock = vi.fn();
-  const sendPresenceUpdateMock = vi.fn(async () => {});
+  const sendMessageMock = vi.fn(async (..._args: any[]) => ({ key: { id: 'provider-1' } }));
+  const sendPresenceUpdateMock = vi.fn(async (..._args: any[]) => {});
+  const readMessagesMock = vi.fn(async (..._args: any[]) => {});
+  const drainPendingReadMock = vi.fn(async (..._args: any[]) => [] as any[]);
+  const callOrder: string[] = [];
 
   return {
     setProcessor(fn: (job: any) => Promise<void>) {
@@ -14,6 +17,9 @@ const hoisted = vi.hoisted(() => {
     },
     sendMessageMock,
     sendPresenceUpdateMock,
+    readMessagesMock,
+    drainPendingReadMock,
+    callOrder,
     rowById: new Map<string, any>()
   };
 });
@@ -50,10 +56,28 @@ vi.mock('./deviceCommands.js', () => {
     sessionManager: {
       get: vi.fn(() => ({
         user: { id: 'me@s.whatsapp.net' },
-        sendPresenceUpdate: hoisted.sendPresenceUpdateMock,
-        sendMessage: hoisted.sendMessageMock
+        sendPresenceUpdate: (state: string, jid: string) => {
+          hoisted.callOrder.push(`presence:${state}`);
+          return hoisted.sendPresenceUpdateMock(state, jid);
+        },
+        readMessages: (keys: any) => {
+          hoisted.callOrder.push('readMessages');
+          return hoisted.readMessagesMock(keys);
+        },
+        sendMessage: (...args: any[]) => {
+          hoisted.callOrder.push('sendMessage');
+          return hoisted.sendMessageMock(...args);
+        }
       }))
     }
+  };
+});
+
+vi.mock('../wa/pendingReadBuffer.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../wa/pendingReadBuffer.js')>();
+  return {
+    ...actual,
+    drainPendingRead: (...args: any[]) => hoisted.drainPendingReadMock(...args)
   };
 });
 
@@ -75,6 +99,8 @@ describe('outboundMessages worker media dispatch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hoisted.rowById.clear();
+    hoisted.callOrder.length = 0;
+    hoisted.drainPendingReadMock.mockResolvedValue([]);
     hoisted.sendMessageMock.mockResolvedValue({ key: { id: 'provider-1' } });
   });
 
@@ -200,5 +226,62 @@ describe('outboundMessages worker media dispatch', () => {
     await expect(
       processor?.({ id: 'job-5', data: { outboundMessageId: 'out-5' }, attemptsMade: 0 })
     ).rejects.toThrow('media_fetch_failed');
+  });
+
+  it('marca read antes de composing y sendMessage cuando hay pending keys', async () => {
+    hoisted.drainPendingReadMock.mockResolvedValue([
+      { id: 'in-1', remoteJid: '5216183610698@s.whatsapp.net', fromMe: false }
+    ]);
+
+    const { startOutboundMessagesWorker } = await import('./outboundMessages.js');
+    startOutboundMessagesWorker();
+    const processor = hoisted.getProcessor();
+
+    hoisted.rowById.set('out-read', {
+      id: 'out-read',
+      tenantId: 'tenant-1',
+      deviceId: 'device-1',
+      to: '5216183610698@s.whatsapp.net',
+      type: 'text',
+      payloadJson: { text: 'respuesta' },
+      createdAt: new Date()
+    });
+
+    await processor?.({ id: 'job-read', data: { outboundMessageId: 'out-read' }, attemptsMade: 0 });
+
+    expect(hoisted.drainPendingReadMock).toHaveBeenCalledWith('device-1', '5216183610698@s.whatsapp.net');
+    expect(hoisted.readMessagesMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.callOrder).toEqual([
+      'readMessages',
+      'presence:composing',
+      'sendMessage',
+      'presence:paused'
+    ]);
+  });
+
+  it('continúa el envío si readMessages falla', async () => {
+    hoisted.drainPendingReadMock.mockResolvedValue([
+      { id: 'in-2', remoteJid: '5216183610698@s.whatsapp.net', fromMe: false }
+    ]);
+    hoisted.readMessagesMock.mockRejectedValueOnce(new Error('read_failed'));
+
+    const { startOutboundMessagesWorker } = await import('./outboundMessages.js');
+    startOutboundMessagesWorker();
+    const processor = hoisted.getProcessor();
+
+    hoisted.rowById.set('out-read-fail', {
+      id: 'out-read-fail',
+      tenantId: 'tenant-1',
+      deviceId: 'device-1',
+      to: '5216183610698@s.whatsapp.net',
+      type: 'text',
+      payloadJson: { text: 'sigue' },
+      createdAt: new Date()
+    });
+
+    await processor?.({ id: 'job-read-fail', data: { outboundMessageId: 'out-read-fail' }, attemptsMade: 0 });
+
+    expect(hoisted.sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.sendPresenceUpdateMock).toHaveBeenCalled();
   });
 });

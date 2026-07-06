@@ -1,7 +1,7 @@
 /**
  * Worker BullMQ para la cola outbound_messages.
  * Job data: { outboundMessageId: string }. Carga OutboundMessage y Device; obtiene socket de
- * sessionManager; envía composing + texto por Baileys; actualiza OutboundMessage a SENT o FAILED.
+ * sessionManager; marca read pendiente; envía composing + texto por Baileys; actualiza OutboundMessage a SENT o FAILED.
  * Estados en BD: QUEUED → PROCESSING → SENT | FAILED. Reintentos (attempts/backoff) configurados en API al encolar.
  * @see apps/api/src/index.ts (POST /devices/:id/messages/send)
  * @see docs/FLUJOS.md (mensaje saliente)
@@ -12,6 +12,11 @@ import { prisma } from '../lib/prisma.js';
 import { redis } from '../lib/redis.js';
 import { sessionManager } from './deviceCommands.js';
 import { createLogger } from '@wc/logger';
+import { markMessagesRead } from '../wa/markMessagesRead.js';
+import {
+  drainPendingRead,
+  isOutboundMarkReadOnSendEnabled
+} from '../wa/pendingReadBuffer.js';
 
 const logger = createLogger(prisma, 'worker');
 
@@ -179,6 +184,16 @@ export function startOutboundMessagesWorker() {
 
       try {
         const sendStartTime = Date.now();
+        if (isOutboundMarkReadOnSendEnabled()) {
+          const keys = await drainPendingRead(row.deviceId, to);
+          if (keys.length > 0) {
+            await markMessagesRead(sock, keys, {
+              deviceId: row.deviceId,
+              tenantId: row.tenantId,
+              source: 'outbound'
+            });
+          }
+        }
         await sock.sendPresenceUpdate('composing', to);
         await new Promise((r) => setTimeout(r, COMPOSING_BEFORE_SEND_MS));
         let sent: any = null;

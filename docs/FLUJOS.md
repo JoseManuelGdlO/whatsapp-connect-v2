@@ -15,7 +15,7 @@ sequenceDiagram
   participant Webhook as URL del bot
 
   WA->>Worker: mensaje "messages.upsert"
-  Worker->>Worker: composing + readMessages
+  Worker->>Redis: track pending-read (si OUTBOUND_MARK_READ)
   Worker->>Worker: normalizeInboundMessage
   Worker->>DB: Event "message.inbound"
   loop Por cada WebhookEndpoint del tenant
@@ -32,7 +32,7 @@ sequenceDiagram
 | Paso | Archivo / lógica | Qué hace | Si falla |
 |------|------------------|----------|----------|
 | 1 | `apps/worker/src/wa/sessionManager.ts` — listener `messages.upsert` | Recibe el mensaje de Baileys y llama a `handleMessagesUpsert` | Sesión desconectada; Device.status ERROR; lastError en BD; logs "SessionError", "decrypt" |
-| 2 | `apps/worker/src/wa/inbound.ts` — `handleMessagesUpsert` | Filtra fromMe/status y mensajes con antigüedad &gt; `WORKER_INBOUND_MAX_AGE_MS` (default 1 día); envía composing; readMessages; normaliza | Replay al reconectar: log `[inbound-skip-stale]`; "Esperando el mensaje": retraso; stub/decryption → clearSenderAndReconnect |
+| 2 | `apps/worker/src/wa/inbound.ts` — `handleMessagesUpsert` | Filtra fromMe/status y mensajes con antigüedad &gt; `WORKER_INBOUND_MAX_AGE_MS` (default 1 día); composing solo si `WORKER_INBOUND_AUTO_COMPOSING=true`; read inmediato si `WORKER_INBOUND_AUTO_READ=true`, si no acumula en Redis para read al responder; normaliza | Replay al reconectar: log `[inbound-skip-stale]`; "Esperando el mensaje": retraso del bot; stub/decryption → clearSenderAndReconnect |
 | 3 | `apps/worker/src/wa/normalize.ts` — `normalizeInboundMessage` | Convierte proto a `normalized` (from, content.text, etc.) | Texto vacío: log `[inbound-inspect]` rawMessageKeys; tipos no soportados |
 | 4 | `apps/worker/src/wa/inbound.ts` | `prisma.event.create`; por cada endpoint `webhookDelivery.create` + `webhookQueue.add('deliver', { deliveryId })` | Event no creado: excepción en worker; delivery no encolada: Redis caído o worker sin Redis |
 | 5 | `apps/worker/src/queues/webhookDispatch.ts` | Job: fetch al endpoint con headers y firma; actualiza WebhookDelivery SUCCESS/FAILED/DLQ | 4xx/5xx o timeout: WebhookDelivery.lastError, nextRetryAt; DLQ = sin más reintentos; log "Webhook delivery failed" |
@@ -59,7 +59,8 @@ sequenceDiagram
   Redis->>Worker: job outbound_messages
   Worker->>DB: OutboundMessage PROCESSING
   Worker->>Worker: sessionManager.get(deviceId)
-  Worker->>WA: sendPresenceUpdate + sendMessage
+  Worker->>Redis: drain pending-read
+  Worker->>WA: readMessages + composing + sendMessage
   Worker->>DB: OutboundMessage SENT o FAILED
 ```
 
@@ -69,7 +70,7 @@ sequenceDiagram
 |------|---------|----------|----------|
 | 1 | `apps/api/src/index.ts` — POST `/devices/:id/messages/send` | Valida device, tenant, status=ONLINE; crea OutboundMessage; encola job | 409 device_not_online: Device.status; 403/404: tenant o device |
 | 2 | `apps/worker/src/queues/outboundMessages.ts` | Busca OutboundMessage; actualiza PROCESSING; busca Device y socket en SessionManager | Mensaje no encontrado: id erróneo; device_not_online / device_not_connected: Device o socket |
-| 3 | Mismo worker | `sock.sendMessage(...)` según tipo (`{ text }`, `{ image: { url }, caption }` o `{ document: { url }, mimetype, fileName, caption }`) | FAILED: OutboundMessage.error; log "[paso-9] FALLO envío por socket"; reintentos BullMQ |
+| 3 | Mismo worker | Drena pending-read; `readMessages` si hay claves; `sendPresenceUpdate('composing')`; `sendMessage` según tipo | FAILED: OutboundMessage.error; log "[paso-9] FALLO envío por socket"; reintentos BullMQ |
 
 **Logs útiles:** `[paso-7]` (API encolado), `[paso-8]` / `[paso-9]` (worker); tabla `OutboundMessage` (status, error).
 

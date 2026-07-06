@@ -11,8 +11,11 @@ Al arrancar, el worker reconecta **todos los dispositivos que tienen sesión gua
 - **`WORKER_RECONNECT_ALL_DELAY_MS`** (opcional): milisegundos de espera antes de empezar las reconexiones (por defecto 5000).
 - **`WORKER_RECONNECT_STAGGER_MS`** (opcional): milisegundos entre cada reconexión para no saturar (por defecto 800). Con ~20 dispositivos son unos 16 s en total.
 - **`WORKER_INBOUND_ACK_MESSAGE`** (opcional): si está definido, el worker envía este texto como mensaje automático al recibir cada mensaje entrante. Sirve para "resetear" la conversación y evitar que WhatsApp muestre "Esperando el mensaje" cuando el error persiste (ej. `Un momento, te respondo en seguida.`).
-- **`WORKER_INBOUND_MAX_AGE_MS`** (opcional): antigüedad máxima de mensajes entrantes a procesar (webhooks, composing, ack). Por defecto `86400000` (1 día). `0` desactiva el filtro (útil en desarrollo).
-- **`WORKER_COMPOSING_BEFORE_SEND_MS`** (opcional): milisegundos que se muestra "escribiendo..." antes de enviar cada respuesta (por defecto 1500).
+- **`WORKER_INBOUND_MAX_AGE_MS`** (opcional): antigüedad máxima de mensajes entrantes a procesar (webhooks, ack). Por defecto `86400000` (1 día). `0` desactiva el filtro (útil en desarrollo).
+- **`WORKER_INBOUND_AUTO_READ`** (opcional): si es `true`, marca automáticamente como leídos los mensajes entrantes (`readMessages`, palomitas azules). Por defecto desactivado.
+- **`WORKER_OUTBOUND_MARK_READ_ON_SEND`** (opcional): si no es `false`, acumula inbound en Redis y marca como leídos al enviar la respuesta (palomitas azules solo al responder). Por defecto activado.
+- **`WORKER_INBOUND_AUTO_COMPOSING`** (opcional): si es `true`, envía presencia "escribiendo…" al recibir cada inbound (comportamiento legacy). Por defecto desactivado; composing solo al enviar la respuesta.
+- **`WORKER_COMPOSING_BEFORE_SEND_MS`** (opcional): milisegundos que se muestra "escribiendo…" antes de enviar cada respuesta (por defecto 1500).
 
 ## Responsabilidad
 - Mantener sesiones WhatsApp Web por `deviceId`
@@ -71,7 +74,12 @@ WhatsApp muestra ese texto al usuario cuando el negocio **no responde** (o no ha
 - **Cola cargada**: muchos mensajes en `outbound_messages` o Redis lento retrasan el envío.
 - **Sin respuesta**: el webhook no llama al API para enviar mensaje (bot apagado, error, etc.).
 
-El worker mitiga esto: envía presencia "escribiendo..." **en cuanto llega el mensaje** (antes de marcar como leído), luego marca como leído, y de nuevo "escribiendo..." justo antes de enviar la respuesta. Si el bot no responde, la presencia se limpia a los ~25 s. Opcionalmente: `WORKER_COMPOSING_BEFORE_SEND_MS` (por defecto 1500 ms) para la duración antes del envío.
+Por defecto el worker **no** envía "escribiendo…" ni marca como leído al recibir el mensaje: esas señales ocurren **solo al enviar la respuesta** (`readMessages` + composing en outbound). Mientras el bot procesa, el usuario ve palomitas grises y el teléfono sigue notificando.
+
+Si el bot tarda mucho, WhatsApp puede mostrar "Esperando el mensaje…". Mitigaciones:
+- **`WORKER_INBOUND_ACK_MESSAGE`**: texto de acuse automático al recibir (se envía como outbound → read + composing al mandar el acuse).
+- **`WORKER_INBOUND_AUTO_COMPOSING=true`**: composing legacy al recibir el inbound.
+- Respuesta rápida del bot.
 
 **Si el error persiste** (por ejemplo el usuario ya vio "Esperando el mensaje" y al reenviar sigue igual), la única forma de "resetear" esa conversación es que el negocio **envíe un mensaje real**. Puedes activar un **mensaje de acuse automático**: define `WORKER_INBOUND_ACK_MESSAGE` (ej. `Un momento, te respondo en seguida.`) y el worker enviará ese texto al chat en cuanto reciba cualquier mensaje entrante. Así la conversación recibe siempre al menos un mensaje y WhatsApp deja de mostrar "Esperando el mensaje". El bot puede seguir respondiendo después por webhook; el acuse es adicional y opcional.
 
