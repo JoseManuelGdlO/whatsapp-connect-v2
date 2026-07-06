@@ -1007,7 +1007,13 @@ app.post(
       type: body.type,
       payloadJson: body.type === 'text'
         ? { text: body.text }
-        : { imageUrl: body.imageUrl, caption: body.caption ?? null },
+        : body.type === 'image'
+          ? { imageUrl: body.imageUrl, caption: body.caption ?? null }
+          : {
+              documentUrl: body.documentUrl,
+              fileName: body.fileName ?? 'document.pdf',
+              caption: body.caption ?? null
+            },
       isTest: body.isTest ?? false
     }
   });

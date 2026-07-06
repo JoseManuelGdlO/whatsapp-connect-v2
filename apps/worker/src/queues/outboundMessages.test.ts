@@ -145,4 +145,60 @@ describe('outboundMessages worker media dispatch', () => {
       processor?.({ id: 'job-3', data: { outboundMessageId: 'out-3' }, attemptsMade: 0 })
     ).rejects.toThrow('media_fetch_failed');
   });
+
+  it('envia documento PDF con documentUrl, fileName y caption', async () => {
+    const { startOutboundMessagesWorker } = await import('./outboundMessages.js');
+    startOutboundMessagesWorker();
+    const processor = hoisted.getProcessor();
+    expect(processor).toBeTypeOf('function');
+
+    hoisted.rowById.set('out-4', {
+      id: 'out-4',
+      tenantId: 'tenant-1',
+      deviceId: 'device-1',
+      to: '5216183610698@s.whatsapp.net',
+      type: 'document',
+      payloadJson: {
+        documentUrl: 'https://example.com/cotizacion.pdf',
+        fileName: 'cotizacion.pdf',
+        caption: 'Tu cotizacion'
+      },
+      createdAt: new Date()
+    });
+
+    await processor?.({ id: 'job-4', data: { outboundMessageId: 'out-4' }, attemptsMade: 0 });
+
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith(
+      '5216183610698@s.whatsapp.net',
+      {
+        document: { url: 'https://example.com/cotizacion.pdf' },
+        mimetype: 'application/pdf',
+        fileName: 'cotizacion.pdf',
+        caption: 'Tu cotizacion'
+      },
+      expect.objectContaining({ mediaUploadTimeoutMs: expect.any(Number) })
+    );
+  });
+
+  it('normaliza error de media cuando falla document fetch', async () => {
+    const { startOutboundMessagesWorker } = await import('./outboundMessages.js');
+    startOutboundMessagesWorker();
+    const processor = hoisted.getProcessor();
+    expect(processor).toBeTypeOf('function');
+
+    hoisted.sendMessageMock.mockRejectedValueOnce(new Error('fetch failed'));
+    hoisted.rowById.set('out-5', {
+      id: 'out-5',
+      tenantId: 'tenant-1',
+      deviceId: 'device-1',
+      to: '5216183610698@s.whatsapp.net',
+      type: 'document',
+      payloadJson: { documentUrl: 'https://example.com/cotizacion.pdf' },
+      createdAt: new Date()
+    });
+
+    await expect(
+      processor?.({ id: 'job-5', data: { outboundMessageId: 'out-5' }, attemptsMade: 0 })
+    ).rejects.toThrow('media_fetch_failed');
+  });
 });

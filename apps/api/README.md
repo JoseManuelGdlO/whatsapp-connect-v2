@@ -31,6 +31,11 @@ Cuando llega un inbound por webhook, tu bot puede responder enviando un mensaje 
   - `to`: usar `normalized.from` tal cual (es JID)
   - `imageUrl`: URL pública `http/https` accesible desde el worker
   - `caption` (opcional)
+- Body (`type: "document"` — PDF):
+  - `to`: usar `normalized.from` tal cual (es JID)
+  - `documentUrl`: URL pública `http/https` accesible desde el worker
+  - `fileName` (opcional, default `document.pdf`; debe terminar en `.pdf`)
+  - `caption` (opcional)
 
 Ejemplo:
 
@@ -46,6 +51,12 @@ curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
   -H "x-api-key: $BOT_API_KEY" \
   -H "x-tenant-id: $TENANT_ID" \
   -d '{"to":"'"$FROM_JID"'","type":"image","imageUrl":"https://example.com/car.png","caption":"Imagen del vehiculo"}'
+
+curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
+  -H "content-type: application/json" \
+  -H "x-api-key: $BOT_API_KEY" \
+  -H "x-tenant-id: $TENANT_ID" \
+  -d '{"to":"'"$FROM_JID"'","type":"document","documentUrl":"https://example.com/cotizacion.pdf","fileName":"cotizacion.pdf","caption":"Tu cotizacion esta lista"}'
 ```
 
 ## Troubleshooting- **401 `invalid_api_key`**: el header `x-api-key` no coincide con `BOT_API_KEY` del API.

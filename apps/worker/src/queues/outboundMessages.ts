@@ -144,7 +144,7 @@ export function startOutboundMessagesWorker() {
         return;
       }
 
-      if (row.type !== 'text' && row.type !== 'image') {
+      if (row.type !== 'text' && row.type !== 'image' && row.type !== 'document') {
         console.log('[paso-8] FALLO outbound: unsupported_type', { outboundMessageId: row.id, type: row.type });
         await prisma.outboundMessage.update({
           where: { id: row.id },
@@ -195,7 +195,7 @@ export function startOutboundMessagesWorker() {
             throw error;
           }
           sent = await sock.sendMessage(to, { text });
-        } else {
+        } else if (row.type === 'image') {
           const imageUrl = payload?.imageUrl;
           const caption = payload?.caption;
           if (!imageUrl || typeof imageUrl !== 'string') {
@@ -223,6 +223,37 @@ export function startOutboundMessagesWorker() {
               mediaDomain: mediaDomain(imageUrl)
             }
           }).catch(() => {});
+        } else {
+          const documentUrl = payload?.documentUrl;
+          const fileName = payload?.fileName;
+          const caption = payload?.caption;
+          if (!documentUrl || typeof documentUrl !== 'string') {
+            const error = new Error('payload.documentUrl required');
+            await logger.error('Invalid outbound document payload', error, {
+              tenantId: row.tenantId,
+              deviceId: row.deviceId,
+              metadata: { outboundMessageId: row.id }
+            }).catch(() => {});
+            throw error;
+          }
+          sent = await sock.sendMessage(
+            to,
+            {
+              document: { url: documentUrl },
+              mimetype: 'application/pdf',
+              fileName: typeof fileName === 'string' && fileName.trim() ? fileName : 'document.pdf',
+              ...(typeof caption === 'string' && caption.trim() ? { caption } : {})
+            },
+            { mediaUploadTimeoutMs: MEDIA_FETCH_TIMEOUT_MS }
+          );
+          await logger.info('Outbound document sent via Baileys', {
+            tenantId: row.tenantId,
+            deviceId: row.deviceId,
+            metadata: {
+              outboundMessageId: row.id,
+              mediaDomain: mediaDomain(documentUrl)
+            }
+          }).catch(() => {});
         }
         await sock.sendPresenceUpdate('paused', to).catch(() => {});
         const sendDuration = Date.now() - sendStartTime;
@@ -248,7 +279,8 @@ export function startOutboundMessagesWorker() {
           }).catch(() => {});
         }
       } catch (err: any) {
-        const normalizedError = row.type === 'image'
+        const isMediaType = row.type === 'image' || row.type === 'document';
+        const normalizedError = isMediaType
           ? classifyMediaSendError(err)
           : (err?.message ?? 'failed');
         console.log('[paso-9] FALLO envío por socket', {
