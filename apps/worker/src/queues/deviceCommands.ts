@@ -9,7 +9,7 @@ import { createLogger } from '@wc/logger';
 export const sessionManager = new SessionManager();
 const logger = createLogger(prisma, 'worker');
 
-type JobData = { deviceId: string; jids?: string[] };
+type JobData = { deviceId: string; jids?: string[]; phoneNumber?: string };
 
 export function startDeviceCommandsWorker() {
   const worker = new Worker<JobData>(
@@ -25,7 +25,8 @@ export function startDeviceCommandsWorker() {
       try {
         if (job.name === 'connect') {
           await logger.info(`Connecting device ${deviceId}`, { deviceId }).catch(() => {});
-          await sessionManager.connect(deviceId);
+          const phoneNumber = (job.data as JobData).phoneNumber;
+          await sessionManager.connect(deviceId, phoneNumber ? { phoneNumber } : undefined);
           return;
         }
 

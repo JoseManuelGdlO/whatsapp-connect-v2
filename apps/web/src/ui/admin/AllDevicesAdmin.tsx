@@ -59,7 +59,7 @@ export function AllDevicesAdmin({ token }: { token: string }) {
       await apiJson(`/devices/${device.id}/connect`, token, { method: 'POST' });
       const d = await apiJson<Device>(`/devices/${device.id}/status`, token);
       updateDeviceInTenant(tenantId, normalizeDevice(d));
-      setMsg(`Conectando "${device.label}" — escanea el QR en Dispositivos si hace falta.`);
+      setMsg(`Conectando "${device.label}" — escanea el QR o usa el código en Dispositivos si hace falta.`);
     } catch (err: unknown) {
       setMsg(`Error al reconectar: ${err instanceof Error ? err.message : 'Error desconocido'}`);
     } finally {
@@ -88,7 +88,7 @@ export function AllDevicesAdmin({ token }: { token: string }) {
     if (!tenantId) return;
     if (
       !confirm(
-        '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
+        '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR o usar el código de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
       )
     ) {
       return;
@@ -99,7 +99,7 @@ export function AllDevicesAdmin({ token }: { token: string }) {
       await apiJson(`/devices/${device.id}/reset-session`, token, { method: 'POST' });
       const list = await apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantId)}`, token);
       setDevicesByTenant((prev) => ({ ...prev, [tenantId]: list.map(normalizeDevice) }));
-      setMsg(`WhatsApp desvinculado en "${device.label}". Escanea un QR nuevo para conectar.`);
+      setMsg(`WhatsApp desvinculado en "${device.label}". Escanea un QR o usa el código para conectar.`);
     } catch (err: unknown) {
       setMsg(`Error: ${err instanceof Error ? err.message : 'No se pudo desvincular WhatsApp'}`);
     } finally {
@@ -221,7 +221,7 @@ export function AllDevicesAdmin({ token }: { token: string }) {
                       <button
                         type="button"
                         disabled={deviceActionLoading === d.id}
-                        title="Borra la vinculación; hará falta escanear QR de nuevo."
+                        title="Borra la vinculación; hará falta escanear QR o usar código de nuevo."
                         onClick={() => handleResetSession(d)}
                         style={{ padding: '4px 8px', fontSize: '12px' }}
                       >

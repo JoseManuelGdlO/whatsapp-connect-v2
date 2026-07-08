@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js';
 import { loadAuthState } from './authStateDb.js';
 import { handleMessagesUpsert } from './inbound.js';
 import { phoneDigitsFromPnJid } from './normalize.js';
+import { sanitizePairingPhone } from './pairingPhone.js';
 import { createLogger } from '@wc/logger';
 import { sendDeviceDisconnectAlert } from '@wc/alert';
 
@@ -79,9 +80,62 @@ export class SessionManager {
     }
   }
 
+  /**
+   * If a live socket is waiting for link (QR) and a phone arrives late, request pairing on it.
+   * Returns true if handled without opening a new socket.
+   */
+  private async requestPairingOnExistingSession(
+    deviceId: string,
+    phoneNumber: string
+  ): Promise<boolean> {
+    const entry = this.sessions.get(deviceId);
+    if (!entry || entry.closing) return false;
+
+    const sock = entry.socket;
+    if (sock.authState?.creds?.registered) return false;
+
+    try {
+      const code = await sock.requestPairingCode(phoneNumber);
+      await prisma.device.update({
+        where: { id: deviceId },
+        data: { status: 'QR', pairingCode: code, lastError: null }
+      });
+      await logger
+        .info('Pairing code requested on existing session', {
+          deviceId,
+          metadata: { hasCode: Boolean(code) }
+        })
+        .catch(() => {});
+      return true;
+    } catch (pairingErr: any) {
+      await prisma.device.update({
+        where: { id: deviceId },
+        data: { lastError: `pairing_code_error: ${pairingErr?.message ?? 'unknown'}` }
+      });
+      await logger
+        .warn(
+          'Failed to request pairing code on existing session',
+          pairingErr instanceof Error ? pairingErr : new Error(String(pairingErr)),
+          { deviceId }
+        )
+        .catch(() => {});
+      return true; // handled (do not open a second socket)
+    }
+  }
+
   /** Inicia sesión Baileys para el dispositivo; persiste auth en BD; registra listeners (messages.upsert, connection.update, etc.). */
-  async connect(deviceId: string) {
-    if (this.sessions.has(deviceId)) return;
+  async connect(deviceId: string, opts?: { phoneNumber?: string }) {
+    const sanitizedPhone = opts?.phoneNumber ? sanitizePairingPhone(opts.phoneNumber) : null;
+
+    // Second Connect with phone while QR is already showing: request code on live socket.
+    if (this.sessions.has(deviceId)) {
+      if (sanitizedPhone) {
+        await this.requestPairingOnExistingSession(deviceId, sanitizedPhone);
+      }
+      return;
+    }
+
+    let pairingRequested = false;
 
     let sock: WASocket;
     let save: () => Promise<void>;
@@ -91,8 +145,20 @@ export class SessionManager {
     try {
       await prisma.device.update({
         where: { id: deviceId },
-        data: { status: 'OFFLINE', lastError: null }
+        data: { status: 'OFFLINE', lastError: null, qr: null, pairingCode: null }
       });
+
+      // Pairing needs a fresh unregistered auth state. Stale registered creds cause
+      // "logging in..." + stream conflict (replaced) and skip requestPairingCode.
+      if (sanitizedPhone) {
+        const existing = await prisma.waSession.findUnique({ where: { deviceId } });
+        if (existing?.authStateEnc) {
+          await prisma.waSession.deleteMany({ where: { deviceId } });
+          await logger
+            .info('Cleared WaSession before pairing-code connect', { deviceId })
+            .catch(() => {});
+        }
+      }
 
       const authState = await loadAuthState(deviceId);
       save = authState.save;
@@ -218,12 +284,50 @@ export class SessionManager {
           });
         }
 
+        // Request pairing only after QR event (socket ready). Do not use `connecting`:
+        // requesting too early fails and pairingRequested would block retries.
+        const shouldRequestPairing =
+          sanitizedPhone &&
+          !sock.authState.creds.registered &&
+          !pairingRequested &&
+          Boolean(qr);
+
+        if (shouldRequestPairing) {
+          pairingRequested = true;
+          try {
+            const code = await sock.requestPairingCode(sanitizedPhone);
+            await prisma.device.update({
+              where: { id: deviceId },
+              data: { status: 'QR', pairingCode: code, lastError: null }
+            });
+          } catch (pairingErr: any) {
+            pairingRequested = false; // allow retry on next QR refresh
+            await prisma.device.update({
+              where: { id: deviceId },
+              data: {
+                pairingCode: null,
+                lastError: `pairing_code_error: ${pairingErr?.message ?? 'unknown'}`
+              }
+            });
+            await logger.warn('Failed to request pairing code', pairingErr instanceof Error ? pairingErr : new Error(String(pairingErr)), {
+              deviceId
+            }).catch(() => {});
+          }
+        }
+
         // Handle connecting state - update to show we're trying to connect
+        // Do not clobber QR status or pairing errors while waiting for link.
         if (connection === 'connecting') {
-          await prisma.device.update({
+          const currentDevice = await prisma.device.findUnique({
             where: { id: deviceId },
-            data: { status: 'OFFLINE', lastError: null }
+            select: { status: true }
           });
+          if (currentDevice?.status !== 'QR') {
+            await prisma.device.update({
+              where: { id: deviceId },
+              data: { status: 'OFFLINE', lastError: null }
+            });
+          }
         }
 
         if (connection === 'open') {
@@ -231,12 +335,14 @@ export class SessionManager {
           const openData: {
             status: 'ONLINE';
             qr: null;
+            pairingCode: null;
             lastSeenAt: Date;
             lastError: null;
             phoneHint?: string;
           } = {
             status: 'ONLINE',
             qr: null,
+            pairingCode: null,
             lastSeenAt: new Date(),
             lastError: null
           };
@@ -270,6 +376,7 @@ export class SessionManager {
             data: {
               status: 'OFFLINE',
               qr: null,
+              pairingCode: null,
               lastError: errorMessage
             }
           });
@@ -483,7 +590,7 @@ export class SessionManager {
       this.sessions.delete(deviceId);
       await prisma.device.update({
         where: { id: deviceId },
-        data: { status: 'OFFLINE', qr: null }
+        data: { status: 'OFFLINE', qr: null, pairingCode: null }
       });
     }
   }

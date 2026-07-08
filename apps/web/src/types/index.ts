@@ -5,6 +5,7 @@ export type Device = {
   phoneHint?: string | null;
   status: string;
   qr: string | null;
+  pairingCode: string | null;
   lastError: string | null;
 };
 

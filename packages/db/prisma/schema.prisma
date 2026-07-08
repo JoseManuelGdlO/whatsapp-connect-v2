@@ -76,6 +76,7 @@ model Device {
   phoneHint String?      // optional hint only (not trusted)
   status    DeviceStatus @default(OFFLINE)
   qr        String?
+  pairingCode String?
   lastSeenAt DateTime?
   lastError String?
   createdAt DateTime     @default(now())

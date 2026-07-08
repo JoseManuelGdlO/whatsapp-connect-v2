@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hoisted = vi.hoisted(() => {
   const handlersBySocket: Array<Record<string, Array<(...args: any[]) => any>>> = [];
-  const sockets: Array<{ end: ReturnType<typeof vi.fn> }> = [];
+  const sockets: Array<{ end: ReturnType<typeof vi.fn>; requestPairingCode: ReturnType<typeof vi.fn> }> = [];
 
   const makeSocket = () => {
     const handlers: Record<string, Array<(...args: any[]) => any>> = {};
+    const requestPairingCode = vi.fn(async () => 'ABCD1234');
     const socket = {
       user: { id: '5216183610698@s.whatsapp.net' },
+      authState: { creds: { registered: false } },
+      requestPairingCode,
       ev: {
         on: (event: string, cb: (...args: any[]) => any) => {
           handlers[event] ||= [];
@@ -25,6 +28,7 @@ const hoisted = vi.hoisted(() => {
     makeSocket,
     handlersBySocket,
     sockets,
+    requestPairingCodeMock: () => sockets[sockets.length - 1]?.requestPairingCode as ReturnType<typeof vi.fn>,
     loadAuthStateMock: vi.fn(),
     handleMessagesUpsertMock: vi.fn(),
     clearCorruptedSessionsMock: vi.fn(async () => {}),
@@ -48,7 +52,15 @@ const hoisted = vi.hoisted(() => {
 
 vi.mock('@whiskeysockets/baileys', () => {
   return {
-    default: vi.fn(() => hoisted.makeSocket()),
+    default: vi.fn((opts?: { auth?: { creds?: { registered?: boolean } } }) => {
+      const socket = hoisted.makeSocket();
+      if (opts?.auth?.creds) {
+        socket.authState.creds = {
+          registered: opts.auth.creds.registered ?? false
+        };
+      }
+      return socket;
+    }),
     DisconnectReason: { loggedOut: 401 },
     fetchLatestBaileysVersion: vi.fn(async () => ({ version: [2, 3000, 0] }))
   };
@@ -78,6 +90,10 @@ vi.mock('../lib/prisma.js', () => {
       },
       event: {
         findMany: vi.fn(async () => [])
+      },
+      waSession: {
+        findUnique: vi.fn(async () => null),
+        deleteMany: vi.fn(async () => ({ count: 0 }))
       }
     }
   };
@@ -110,7 +126,7 @@ describe('SessionManager', () => {
     hoisted.saveImmediateMock.mockImplementation(async () => {});
     (hoisted.saveMock as any).immediate = hoisted.saveImmediateMock;
     hoisted.loadAuthStateMock.mockImplementation(async () => ({
-      state: { creds: {}, keys: { get: vi.fn(), set: vi.fn() } },
+      state: { creds: { registered: false }, keys: { get: vi.fn(), set: vi.fn() } },
       save: hoisted.saveMock,
       clearCorruptedSessions: hoisted.clearCorruptedSessionsMock,
       clearSenderSessionsInMemory: hoisted.clearSenderSessionsInMemoryMock
@@ -304,5 +320,144 @@ describe('SessionManager', () => {
       where: { id: 'device-backfill' },
       data: { phoneHint: '5216183610698' }
     });
+  });
+
+  it('genera QR y pairingCode cuando hay phoneNumber', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-pairing', { phoneNumber: '5215512345678' });
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    expect(onConnectionUpdate).toBeDefined();
+
+    await onConnectionUpdate?.({ qr: 'qr-payload' });
+
+    expect(hoisted.requestPairingCodeMock()).toHaveBeenCalledWith('5215512345678');
+    expect(hoisted.prismaDeviceUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'device-pairing' },
+        data: expect.objectContaining({ status: 'QR', qr: 'qr-payload' })
+      })
+    );
+    expect(hoisted.prismaDeviceUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'device-pairing' },
+        data: expect.objectContaining({ status: 'QR', pairingCode: 'ABCD1234' })
+      })
+    );
+  });
+
+  it('solo genera QR si no hay phoneNumber', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-qr-only');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    await onConnectionUpdate?.({ qr: 'qr-payload' });
+
+    expect(hoisted.requestPairingCodeMock()).not.toHaveBeenCalled();
+    const wrotePairingCode = (
+      hoisted.prismaDeviceUpdateMock.mock.calls as unknown as Array<[{ data?: { pairingCode?: string | null } }]>
+    ).some((call) => typeof call[0]?.data?.pairingCode === 'string');
+    expect(wrotePairingCode).toBe(false);
+  });
+
+  it('limpia pairingCode al abrir conexión', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-pairing-open');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    await onConnectionUpdate?.({ connection: 'open' });
+
+    expect(hoisted.prismaDeviceUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'device-pairing-open' },
+        data: expect.objectContaining({
+          status: 'ONLINE',
+          qr: null,
+          pairingCode: null
+        })
+      })
+    );
+  });
+
+  it('limpia pairingCode cuando falla requestPairingCode', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-pairing-fail', { phoneNumber: '5215512345678' });
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    hoisted.requestPairingCodeMock().mockRejectedValueOnce(new Error('rate limited'));
+
+    await onConnectionUpdate?.({ qr: 'qr-payload' });
+
+    expect(hoisted.prismaDeviceUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'device-pairing-fail' },
+        data: expect.objectContaining({
+          pairingCode: null,
+          lastError: 'pairing_code_error: rate limited'
+        })
+      })
+    );
+  });
+
+  it('no pide código si creds.registered', async () => {
+    hoisted.loadAuthStateMock.mockImplementation(async () => ({
+      state: { creds: { registered: true }, keys: { get: vi.fn(), set: vi.fn() } },
+      save: hoisted.saveMock,
+      clearCorruptedSessions: hoisted.clearCorruptedSessionsMock,
+      clearSenderSessionsInMemory: hoisted.clearSenderSessionsInMemoryMock
+    }));
+
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-registered', { phoneNumber: '5215512345678' });
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    await onConnectionUpdate?.({ qr: 'qr-payload' });
+
+    expect(hoisted.requestPairingCodeMock()).not.toHaveBeenCalled();
+  });
+
+  it('pide código en sesión existente si Connect se vuelve a llamar con teléfono', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-late-phone');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    await onConnectionUpdate?.({ qr: 'qr-payload' });
+    expect(hoisted.requestPairingCodeMock()).not.toHaveBeenCalled();
+
+    await manager.connect('device-late-phone', { phoneNumber: '5215512345678' });
+
+    expect(hoisted.requestPairingCodeMock()).toHaveBeenCalledWith('5215512345678');
+    expect(hoisted.prismaDeviceUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'device-late-phone' },
+        data: expect.objectContaining({ status: 'QR', pairingCode: 'ABCD1234' })
+      })
+    );
+    // Must not open a second socket
+    expect(hoisted.handlersBySocket.length).toBe(1);
+  });
+
+  it('no pide código en connecting (solo tras evento qr)', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-connecting-only', { phoneNumber: '5215512345678' });
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    await onConnectionUpdate?.({ connection: 'connecting' });
+
+    expect(hoisted.requestPairingCodeMock()).not.toHaveBeenCalled();
   });
 });

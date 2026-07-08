@@ -62,7 +62,7 @@ export function ClientesAdmin({
       await apiJson(`/devices/${device.id}/connect`, token, { method: 'POST' });
       const d = await apiJson<Device>(`/devices/${device.id}/status`, token);
       setDevices((prev) => prev.map((x) => (x.id === d.id ? { ...d, label: d.label || x.label } : x)));
-      setMsg(`Conectando "${device.label}" — escanea el QR en la pestaña Devices si hace falta.`);
+      setMsg(`Conectando "${device.label}" — escanea el QR o usa el código en la pestaña Devices si hace falta.`);
     } catch (err: unknown) {
       setMsg(`Error al reconectar: ${err instanceof Error ? err.message : 'Error desconocido'}`);
     } finally {
@@ -87,7 +87,7 @@ export function ClientesAdmin({
   const handleResetSession = async (device: Device) => {
     if (
       !confirm(
-        '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
+        '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR o usar el código de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
       )
     ) {
       return;
@@ -96,7 +96,7 @@ export function ClientesAdmin({
     try {
       await apiJson(`/devices/${device.id}/disconnect`, token, { method: 'POST' });
       await apiJson(`/devices/${device.id}/reset-session`, token, { method: 'POST' });
-      setMsg(`WhatsApp desvinculado en "${device.label}". Escanea un QR nuevo para conectar.`);
+      setMsg(`WhatsApp desvinculado en "${device.label}". Escanea un QR o usa el código para conectar.`);
       const list = await apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantIdOverride)}`, token);
       setDevices(list.map((x) => ({ ...x, label: x.label || x.id || 'Device sin nombre' })));
     } catch (err: unknown) {
@@ -207,7 +207,7 @@ export function ClientesAdmin({
       </div>
       <div className="card">
         <h3>Clientes</h3>
-        <p className="muted">Haz clic en un cliente para ver sus dispositivos (Conectar, Reconectar, Pausar conexión, Desvincular WhatsApp, Ping, link QR, Eliminar).</p>
+        <p className="muted">Haz clic en un cliente para ver sus dispositivos (Conectar, Reconectar, Pausar conexión, Desvincular WhatsApp, Ping, link QR/código, Eliminar).</p>
         <div className="list">
           {tenants.map((t) => (
             <div key={t.id} className={`row ${tenantIdOverride === t.id ? 'active' : ''}`} style={{ cursor: 'default' }}>
@@ -284,7 +284,7 @@ export function ClientesAdmin({
                       <button
                         type="button"
                         disabled={deviceActionLoading === d.id}
-                        title="Borra la vinculación; hará falta escanear QR de nuevo."
+                        title="Borra la vinculación; hará falta escanear QR o usar código de nuevo."
                         onClick={() => handleResetSession(d)}
                         style={{ padding: '4px 8px', fontSize: '12px' }}
                       >

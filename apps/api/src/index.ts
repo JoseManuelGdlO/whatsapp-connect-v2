@@ -24,6 +24,7 @@ import crypto from 'crypto';
 import { createLogger } from '@wc/logger';
 import { sendAlert } from '@wc/alert';
 import { sendMessageBodySchema } from './messages/sendPayload.js';
+import { sanitizePairingPhone } from './lib/pairingPhone.js';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -311,10 +312,11 @@ app.get(
       });
     }
 
-    if (device.status === 'QR' && device.qr) {
+    if (device.status === 'QR' && (device.qr || device.pairingCode)) {
       return res.json({ 
         status: 'QR', 
         qr: device.qr,
+        pairingCode: device.pairingCode,
         deviceLabel: device.label,
         expiresAt: link.expiresAt
       });
@@ -325,6 +327,55 @@ app.get(
       status: 'EXPIRED', 
       deviceLabel: device.label 
     });
+  })
+);
+
+// Public: request pairing code with phone number (no auth; token-gated)
+app.post(
+  '/public/qr/:token/pairing',
+  asyncHandler(async (req, res) => {
+    const { token } = req.params;
+
+    const link = await prisma.publicQrLink.findUnique({
+      where: { token },
+      include: { device: true }
+    });
+
+    if (!link) {
+      return res.status(404).json({ error: 'not_found', status: 'NOT_FOUND' });
+    }
+
+    if (new Date() > link.expiresAt) {
+      return res.status(410).json({ error: 'expired', status: 'EXPIRED', deviceLabel: link.device.label });
+    }
+
+    const device = await prisma.device.findUnique({ where: { id: link.deviceId } });
+    if (!device) {
+      return res.status(404).json({ error: 'not_found', status: 'NOT_FOUND' });
+    }
+
+    if (device.status === 'ONLINE') {
+      return res.status(409).json({ error: 'already_online', status: 'ONLINE', deviceLabel: device.label });
+    }
+
+    if (device.status !== 'QR' && device.status !== 'OFFLINE') {
+      return res.status(409).json({ error: 'device_not_linkable', status: device.status, deviceLabel: device.label });
+    }
+
+    const body = (req.body ?? {}) as { phoneNumber?: string };
+    const rawPhone = typeof body.phoneNumber === 'string' ? body.phoneNumber.trim() : '';
+    const phoneNumber = rawPhone ? sanitizePairingPhone(rawPhone) : null;
+    if (!phoneNumber) {
+      return res.status(400).json({ error: 'invalid_phone_number' });
+    }
+
+    await deviceCommandsQueue.add(
+      'connect',
+      { deviceId: device.id, phoneNumber },
+      { removeOnComplete: true, removeOnFail: false }
+    );
+
+    res.json({ ok: true, deviceLabel: device.label });
   })
 );
 
@@ -628,7 +679,7 @@ app.post(
     await prisma.waSession.deleteMany({ where: { deviceId: device.id } });
     await prisma.device.update({
       where: { id: device.id },
-      data: { status: 'OFFLINE', qr: null, lastError: null }
+      data: { status: 'OFFLINE', qr: null, pairingCode: null, lastError: null }
     });
     res.json({ ok: true });
   })
@@ -685,7 +736,7 @@ app.get(
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
 
-  let last = JSON.stringify({ status: initial.status, qr: initial.qr, lastError: initial.lastError, updatedAt: initial.updatedAt });
+  let last = JSON.stringify({ status: initial.status, qr: initial.qr, pairingCode: initial.pairingCode, lastError: initial.lastError, updatedAt: initial.updatedAt });
   res.write(`event: device\n`);
   res.write(`data: ${last}\n\n`);
 
@@ -693,7 +744,7 @@ app.get(
     try {
       const d = await prisma.device.findUnique({ where: { id: deviceId } });
       if (!d) return;
-      const cur = JSON.stringify({ status: d.status, qr: d.qr, lastError: d.lastError, updatedAt: d.updatedAt });
+      const cur = JSON.stringify({ status: d.status, qr: d.qr, pairingCode: d.pairingCode, lastError: d.lastError, updatedAt: d.updatedAt });
       if (cur !== last) {
         last = cur;
         res.write(`event: device\n`);
@@ -722,7 +773,18 @@ app.post(
   if (!device) return res.status(404).json({ error: 'not_found' });
   if (!scope.isSuperadmin && device.tenantId !== scope.tenantId) return res.status(403).json({ error: 'forbidden' });
 
-  await deviceCommandsQueue.add('connect', { deviceId: device.id }, { removeOnComplete: true, removeOnFail: false });
+  const body = (req.body ?? {}) as { phoneNumber?: string };
+  const rawPhone = typeof body.phoneNumber === 'string' ? body.phoneNumber.trim() : '';
+  const phoneNumber = rawPhone ? sanitizePairingPhone(rawPhone) : null;
+  if (rawPhone && !phoneNumber) {
+    return res.status(400).json({ error: 'invalid_phone_number' });
+  }
+
+  await deviceCommandsQueue.add(
+    'connect',
+    { deviceId: device.id, ...(phoneNumber ? { phoneNumber } : {}) },
+    { removeOnComplete: true, removeOnFail: false }
+  );
   res.json({ ok: true });
   })
 );

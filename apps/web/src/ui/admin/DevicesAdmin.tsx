@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { apiJson } from '../../api/client';
 import type { Device, OutboundMessage } from '../../types';
+import { DeviceLinkPanel } from '../components/DeviceLinkPanel';
 
 export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenantIdOverride: string }) {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -10,6 +11,7 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [connectPhone, setConnectPhone] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [testTo, setTestTo] = useState('');
@@ -66,6 +68,10 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
     };
   }, [token, selectedId]);
 
+  useEffect(() => {
+    setConnectPhone(selectedDevice?.phoneHint ?? '');
+  }, [selectedId, selectedDevice?.phoneHint]);
+
   const handleDelete = async (deviceId: string, deviceLabel: string, deviceStatus: string) => {
     const isConnected = deviceStatus === 'ONLINE' || deviceStatus === 'QR';
     const warning = isConnected
@@ -92,7 +98,10 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
   const handleConnect = async (device: Device) => {
     setConnecting(true);
     try {
-      await apiJson(`/devices/${device.id}/connect`, token, { method: 'POST' });
+      const body = connectPhone.trim()
+        ? JSON.stringify({ phoneNumber: connectPhone.trim() })
+        : undefined;
+      await apiJson(`/devices/${device.id}/connect`, token, { method: 'POST', body });
       setSelectedId(device.id);
       setTimeout(async () => {
         try {
@@ -126,7 +135,7 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
   const handleResetSession = async (device: Device) => {
     if (
       !confirm(
-        '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
+        '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR o usar el código de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
       )
     ) {
       return;
@@ -134,7 +143,7 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
     try {
       await apiJson(`/devices/${device.id}/disconnect`, token, { method: 'POST' });
       await apiJson(`/devices/${device.id}/reset-session`, token, { method: 'POST' });
-      setMsg('WhatsApp desvinculado. Escanea un QR nuevo para conectar.');
+      setMsg('WhatsApp desvinculado. Escanea un QR o usa el código para conectar.');
       setSelectedId(device.id);
     } catch (err: unknown) {
       setMsg(`Error: ${err instanceof Error ? err.message : 'No se pudo desvincular WhatsApp'}`);
@@ -243,7 +252,7 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
                 </button>
                 <button
                   type="button"
-                  title="Borra la vinculación; hará falta escanear QR de nuevo."
+                  title="Borra la vinculación; hará falta escanear QR o usar código de nuevo."
                   onClick={() => handleResetSession(d)}
                   style={{ padding: '4px 8px', fontSize: '12px' }}
                 >
@@ -282,6 +291,14 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
       {selectedDevice ? (
         <div className="card">
           <h3>QR y estado: {selectedDevice.label}</h3>
+          <div className="actions" style={{ marginBottom: 8 }}>
+            <input
+              value={connectPhone}
+              onChange={(e) => setConnectPhone(e.target.value)}
+              placeholder="Teléfono (código): 521XXXXXXXXXX"
+              style={{ minWidth: 220 }}
+            />
+          </div>
           <div className="actions">
             <button
               type="button"
@@ -299,7 +316,7 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
             </button>
             <button
               type="button"
-              title="Borra la vinculación; hará falta escanear QR de nuevo."
+              title="Borra la vinculación; hará falta escanear QR o usar código de nuevo."
               onClick={() => handleResetSession(selectedDevice)}
             >
               Desvincular WhatsApp (borrar sesión)
@@ -329,12 +346,13 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
             ) : null}
           </div>
           <p className="muted">Estado: {selectedDevice.status}{selectedDevice.lastError ? ` · ${selectedDevice.lastError}` : ''}</p>
-          {selectedDevice.status === 'QR' && qrDataUrl ? (
-            <div style={{ marginTop: 16 }}>
-              <img src={qrDataUrl} alt="QR" style={{ width: 260, height: 260, display: 'block' }} />
-              <p className="muted" style={{ marginTop: 8 }}>Escanea con WhatsApp para vincular el dispositivo.</p>
-            </div>
-          ) : null}
+          <DeviceLinkPanel
+            qrDataUrl={qrDataUrl}
+            pairingCode={selectedDevice.pairingCode}
+            deviceLabel={selectedDevice.label}
+            isLinking={selectedDevice.status === 'QR'}
+            needsPhoneForPairing={!connectPhone.trim() && !selectedDevice.pairingCode}
+          />
           {selectedDevice.status === 'ONLINE' ? (
             <p style={{ color: '#22c55e', marginTop: 8 }}>Dispositivo conectado.</p>
           ) : null}

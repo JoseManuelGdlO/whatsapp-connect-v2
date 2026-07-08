@@ -5,6 +5,7 @@ import { useTenantId } from '../../hooks';
 import { useAuth } from '../../state/auth';
 import type { Device, OutboundMessage } from '../../types';
 import { TenantSelector } from '../admin/TenantSelector';
+import { DeviceLinkPanel } from '../components/DeviceLinkPanel';
 
 export function DevicesPage() {
   const { token, user } = useAuth();
@@ -15,6 +16,7 @@ export function DevicesPage() {
   const selected = useMemo(() => devices.find((d) => d.id === selectedId) ?? null, [devices, selectedId]);
 
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [connectPhone, setConnectPhone] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [connecting, setConnecting] = useState(false);
 
@@ -85,11 +87,15 @@ export function DevicesPage() {
     };
   }, [token, tenantId, selectedId]);
 
+  useEffect(() => {
+    setConnectPhone(selected?.phoneHint ?? '');
+  }, [selectedId, selected?.phoneHint]);
+
   return (
     <div className="grid">
       <div className="card">
         <h2>Devices</h2>
-        <p className="muted">Selecciona un device y conecta por QR.</p>
+        <p className="muted">Selecciona un device y conecta por QR o código de emparejamiento.</p>
 
         <TenantSelector />
 
@@ -187,6 +193,14 @@ export function DevicesPage() {
           <p className="muted">Selecciona un device.</p>
         ) : (
           <>
+            <div className="actions" style={{ marginBottom: 8 }}>
+              <input
+                value={connectPhone}
+                onChange={(e) => setConnectPhone(e.target.value)}
+                placeholder="Teléfono (código): 521XXXXXXXXXX"
+                style={{ minWidth: 220 }}
+              />
+            </div>
             <div className="actions">
               <button
                 disabled={connecting}
@@ -194,7 +208,10 @@ export function DevicesPage() {
                   if (!token || !selected) return;
                   setConnecting(true);
                   try {
-                    await apiJson(`/devices/${selected.id}/connect`, token!, { method: 'POST' });
+                    const body = connectPhone.trim()
+                      ? JSON.stringify({ phoneNumber: connectPhone.trim() })
+                      : undefined;
+                    await apiJson(`/devices/${selected.id}/connect`, token!, { method: 'POST', body });
                     setTimeout(async () => {
                       try {
                         const d = await apiJson<Device>(`/devices/${selected.id}/status`, token);
@@ -226,18 +243,18 @@ export function DevicesPage() {
                 Pausar conexión
               </button>
               <button
-                title="Borra la vinculación; hará falta escanear QR de nuevo."
+                title="Borra la vinculación; hará falta escanear QR o usar código de nuevo."
                 onClick={async () => {
                   if (
                     !confirm(
-                      '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
+                      '¿Desvincular WhatsApp? Se borrará la sesión guardada y habrá que escanear el QR o usar el código de nuevo. Esta acción no se puede deshacer desde el teléfono automáticamente.'
                     )
                   ) {
                     return;
                   }
                   await apiJson(`/devices/${selected.id}/disconnect`, token!, { method: 'POST' });
                   await apiJson(`/devices/${selected.id}/reset-session`, token!, { method: 'POST' });
-                  alert('WhatsApp desvinculado. Escanea un QR nuevo para conectar.');
+                  alert('WhatsApp desvinculado. Escanea un QR o usa el código para conectar.');
                 }}
               >
                 Desvincular WhatsApp (borrar sesión)
@@ -316,7 +333,13 @@ export function DevicesPage() {
               </button>
             </div>
 
-            {selected.status === 'QR' && qrDataUrl ? <img src={qrDataUrl} alt="qr" style={{ width: 260, height: 260 }} /> : null}
+            <DeviceLinkPanel
+              qrDataUrl={qrDataUrl}
+              pairingCode={selected.pairingCode}
+              deviceLabel={selected.label}
+              isLinking={selected.status === 'QR'}
+              needsPhoneForPairing={!connectPhone.trim() && !selected.pairingCode}
+            />
             {selected.status === 'ERROR' && selected.lastError ? (
               <div className="error">
                 <strong>Error:</strong> {selected.lastError}
