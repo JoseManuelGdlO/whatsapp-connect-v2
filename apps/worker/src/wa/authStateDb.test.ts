@@ -3,6 +3,11 @@ import { encryptString } from '../lib/crypto.js';
 
 type SessionRow = { deviceId: string; authStateEnc: string };
 
+/** Baileys types session keys as Uint8Array; tests only need opaque persisted blobs. */
+function mockSessionEntry(counter: number) {
+  return { chainKey: { counter } } as never;
+}
+
 const sessionStore = new Map<string, SessionRow>();
 
 vi.mock('../lib/prisma.js', () => {
@@ -29,7 +34,12 @@ vi.mock('../lib/prisma.js', () => {
             sessionStore.set(where.deviceId, row);
             return row;
           }
-        )
+        ),
+        deleteMany: vi.fn(async ({ where }: { where: { deviceId: string } }) => {
+          const had = sessionStore.has(where.deviceId);
+          sessionStore.delete(where.deviceId);
+          return { count: had ? 1 : 0 };
+        })
       }
     }
   };
@@ -54,7 +64,7 @@ describe('authStateDb', () => {
 
     await loaded.state.keys.set({
       session: {
-        '5216183610698@s.whatsapp.net': { chainKey: { counter: 1 } }
+        '5216183610698@s.whatsapp.net': mockSessionEntry(1)
       }
     });
 
@@ -81,7 +91,7 @@ describe('authStateDb', () => {
       const jid = `52${i}@s.whatsapp.net`;
       await loaded.state.keys.set({
         session: {
-          [jid]: { chainKey: { counter: i } }
+          [jid]: mockSessionEntry(i)
         }
       });
       await loaded.save();
@@ -105,6 +115,25 @@ describe('authStateDb', () => {
     const loaded = await loadAuthState(deviceId);
     const keys = await loaded.state.keys.get('session', ['999@s.whatsapp.net']);
     expect(keys['999@s.whatsapp.net']).toBeUndefined();
+  });
+
+  it('dispose impide que un save debounced recree WaSession tras desvincular', async () => {
+    vi.useFakeTimers();
+    const { loadAuthState, disposeAuthStateSaves, deletePersistedAuthState } = await import('./authStateDb.js');
+
+    const deviceId = 'device-dispose';
+    const loaded = await loadAuthState(deviceId);
+    await loaded.state.keys.set({
+      session: {
+        '5216183610698@s.whatsapp.net': mockSessionEntry(1)
+      }
+    });
+    await loaded.save();
+    disposeAuthStateSaves(deviceId);
+    await deletePersistedAuthState(deviceId);
+
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(sessionStore.has(deviceId)).toBe(false);
   });
 
   it('si cambia la llave de cifrado no reutiliza estado previo y arranca limpio', async () => {

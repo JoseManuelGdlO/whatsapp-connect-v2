@@ -94,7 +94,6 @@ export function ClientesAdmin({
     }
     setDeviceActionLoading(device.id);
     try {
-      await apiJson(`/devices/${device.id}/disconnect`, token, { method: 'POST' });
       await apiJson(`/devices/${device.id}/reset-session`, token, { method: 'POST' });
       setMsg(`WhatsApp desvinculado en "${device.label}". Escanea un QR o usa el código para conectar.`);
       const list = await apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantIdOverride)}`, token);

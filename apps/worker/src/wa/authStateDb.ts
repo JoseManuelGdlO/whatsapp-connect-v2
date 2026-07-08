@@ -6,6 +6,44 @@ import { decryptString, encryptString } from '../lib/crypto.js';
 
 type StoredKeyData = Record<string, Record<string, any>>;
 
+/** Active dispose callbacks per device (one per loadAuthState call). */
+const activeAuthDisposers = new Map<string, Set<() => void>>();
+
+function registerAuthDisposer(deviceId: string, dispose: () => void): void {
+  let set = activeAuthDisposers.get(deviceId);
+  if (!set) {
+    set = new Set();
+    activeAuthDisposers.set(deviceId, set);
+  }
+  set.add(dispose);
+}
+
+function unregisterAuthDisposer(deviceId: string, dispose: () => void): void {
+  const set = activeAuthDisposers.get(deviceId);
+  if (!set) return;
+  set.delete(dispose);
+  if (set.size === 0) activeAuthDisposers.delete(deviceId);
+}
+
+/** Cancel pending debounced/immediate saves for all in-memory auth handles of a device. */
+export function disposeAuthStateSaves(deviceId: string): void {
+  const set = activeAuthDisposers.get(deviceId);
+  if (!set) return;
+  for (const dispose of [...set]) {
+    dispose();
+  }
+}
+
+/** Remove persisted WA auth from DB (call after disposeAuthStateSaves to avoid resurrection). */
+export async function deletePersistedAuthState(deviceId: string): Promise<void> {
+  await prisma.waSession.deleteMany({ where: { deviceId } });
+}
+
+export async function resetPersistedAuthState(deviceId: string): Promise<void> {
+  disposeAuthStateSaves(deviceId);
+  await deletePersistedAuthState(deviceId);
+}
+
 function makeKeyStore(data: StoredKeyData, onUpdate?: () => void): SignalKeyStore {
   return {
     get: async (type, ids) => {
@@ -47,6 +85,7 @@ export async function loadAuthState(deviceId: string): Promise<{
   save: () => Promise<void>;
   clearCorruptedSessions: () => Promise<void>;
   clearSenderSessionsInMemory: (jid: string | null, from: string | null) => void;
+  dispose: () => void;
 }> {
   const existing = await prisma.waSession.findUnique({ where: { deviceId } });
 
@@ -66,25 +105,45 @@ export async function loadAuthState(deviceId: string): Promise<{
 
   let savePending = false;
   let saveTimeout: NodeJS.Timeout | null = null;
+  let disposed = false;
+
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    if (saveTimeout) {
+      clearTimeout(saveTimeout);
+      saveTimeout = null;
+    }
+    savePending = false;
+    unregisterAuthDisposer(deviceId, dispose);
+  };
+
+  registerAuthDisposer(deviceId, dispose);
+
+  const persistAuthState = async () => {
+    if (disposed) return;
+    const payload = JSON.stringify({ creds: state.creds, keysData }, BufferJSON.replacer);
+    const authStateEnc = encryptString(payload);
+    await prisma.waSession.upsert({
+      where: { deviceId },
+      create: { deviceId, authStateEnc },
+      update: { authStateEnc }
+    });
+  };
 
   const triggerSave = () => {
+    if (disposed) return;
     // Debounce saves to avoid too frequent DB writes
     if (savePending) return;
-    
+
     savePending = true;
     if (saveTimeout) {
       clearTimeout(saveTimeout);
     }
-    
+
     saveTimeout = setTimeout(async () => {
       try {
-        const payload = JSON.stringify({ creds: state.creds, keysData }, BufferJSON.replacer);
-        const authStateEnc = encryptString(payload);
-        await prisma.waSession.upsert({
-          where: { deviceId },
-          create: { deviceId, authStateEnc },
-          update: { authStateEnc }
-        });
+        await persistAuthState();
       } catch (err) {
         // Log but don't throw - saving is best effort
         console.error(`[authStateDb] Failed to save state for ${deviceId}:`, err);
@@ -106,19 +165,14 @@ export async function loadAuthState(deviceId: string): Promise<{
 
   // Force immediate save (for critical updates like creds.update)
   const saveImmediate = async () => {
+    if (disposed) return;
     if (saveTimeout) {
       clearTimeout(saveTimeout);
       saveTimeout = null;
     }
     savePending = false;
     try {
-      const payload = JSON.stringify({ creds: state.creds, keysData }, BufferJSON.replacer);
-      const authStateEnc = encryptString(payload);
-      await prisma.waSession.upsert({
-        where: { deviceId },
-        create: { deviceId, authStateEnc },
-        update: { authStateEnc }
-      });
+      await persistAuthState();
     } catch (err) {
       console.error(`[authStateDb] Failed to save state immediately for ${deviceId}:`, err);
       throw err;
@@ -200,7 +254,7 @@ export async function loadAuthState(deviceId: string): Promise<{
   };
   (saveWrapper as any).immediate = saveImmediate;
 
-  return { state, save: saveWrapper, clearCorruptedSessions, clearSenderSessionsInMemory };
+  return { state, save: saveWrapper, clearCorruptedSessions, clearSenderSessionsInMemory, dispose };
 }
 
 /**

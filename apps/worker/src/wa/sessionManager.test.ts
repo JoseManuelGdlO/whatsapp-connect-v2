@@ -35,6 +35,8 @@ const hoisted = vi.hoisted(() => {
     clearSenderSessionsInMemoryMock: vi.fn(),
     saveMock: vi.fn(async () => {}),
     saveImmediateMock: vi.fn(async () => {}),
+    disposeAuthStateSavesMock: vi.fn(),
+    deletePersistedAuthStateMock: vi.fn(async () => {}),
     prismaDeviceUpdateMock: vi.fn(async () => ({})),
     prismaDeviceFindUniqueMock: vi.fn(async ({ where }: any): Promise<{
       id: string;
@@ -68,7 +70,9 @@ vi.mock('@whiskeysockets/baileys', () => {
 
 vi.mock('./authStateDb.js', () => {
   return {
-    loadAuthState: hoisted.loadAuthStateMock
+    loadAuthState: hoisted.loadAuthStateMock,
+    disposeAuthStateSaves: hoisted.disposeAuthStateSavesMock,
+    deletePersistedAuthState: hoisted.deletePersistedAuthStateMock
   };
 });
 
@@ -129,7 +133,8 @@ describe('SessionManager', () => {
       state: { creds: { registered: false }, keys: { get: vi.fn(), set: vi.fn() } },
       save: hoisted.saveMock,
       clearCorruptedSessions: hoisted.clearCorruptedSessionsMock,
-      clearSenderSessionsInMemory: hoisted.clearSenderSessionsInMemoryMock
+      clearSenderSessionsInMemory: hoisted.clearSenderSessionsInMemoryMock,
+      dispose: vi.fn()
     }));
     hoisted.prismaDeviceFindUniqueMock.mockImplementation(async ({ where }: any) => ({
       id: where.id,
@@ -236,6 +241,8 @@ describe('SessionManager', () => {
     await vi.advanceTimersByTimeAsync(60000);
     expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(1);
     expect(manager.get('device-logged-out')).toBeNull();
+    expect(hoisted.disposeAuthStateSavesMock).toHaveBeenCalledWith('device-logged-out');
+    expect(hoisted.deletePersistedAuthStateMock).toHaveBeenCalledWith('device-logged-out');
   });
 
   it('no reconecta cuando loggedOut viene en error.data', async () => {
@@ -255,6 +262,8 @@ describe('SessionManager', () => {
     await vi.advanceTimersByTimeAsync(60000);
     expect(hoisted.loadAuthStateMock).toHaveBeenCalledTimes(1);
     expect(manager.get('device-logged-out-data')).toBeNull();
+    expect(hoisted.disposeAuthStateSavesMock).toHaveBeenCalledWith('device-logged-out-data');
+    expect(hoisted.deletePersistedAuthStateMock).toHaveBeenCalledWith('device-logged-out-data');
   });
 
   it('guarda phoneHint al abrir conexión cuando aún no existe', async () => {
@@ -412,7 +421,8 @@ describe('SessionManager', () => {
       state: { creds: { registered: true }, keys: { get: vi.fn(), set: vi.fn() } },
       save: hoisted.saveMock,
       clearCorruptedSessions: hoisted.clearCorruptedSessionsMock,
-      clearSenderSessionsInMemory: hoisted.clearSenderSessionsInMemoryMock
+      clearSenderSessionsInMemory: hoisted.clearSenderSessionsInMemoryMock,
+      dispose: vi.fn()
     }));
 
     const { SessionManager } = await import('./sessionManager.js');
@@ -459,5 +469,43 @@ describe('SessionManager', () => {
     await onConnectionUpdate?.({ connection: 'connecting' });
 
     expect(hoisted.requestPairingCodeMock()).not.toHaveBeenCalled();
+  });
+
+  it('resetSession cierra socket, cancela saves y borra WaSession', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-reset');
+
+    expect(manager.get('device-reset')).not.toBeNull();
+    await manager.resetSession('device-reset');
+
+    expect(hoisted.disposeAuthStateSavesMock).toHaveBeenCalledWith('device-reset');
+    expect(hoisted.deletePersistedAuthStateMock).toHaveBeenCalledWith('device-reset');
+    expect(manager.get('device-reset')).toBeNull();
+    expect(hoisted.sockets[0].end).toHaveBeenCalled();
+    expect(hoisted.prismaDeviceUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'device-reset' },
+        data: expect.objectContaining({ status: 'OFFLINE', pairingCode: null, lastError: null })
+      })
+    );
+  });
+
+  it('resetSession cancela un reconnect programado', async () => {
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-reset-reconnect');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    await onConnectionUpdate?.({
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 500 }, message: 'closed' } }
+    });
+
+    await manager.resetSession('device-reset-reconnect');
+    const callsBefore = hoisted.loadAuthStateMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(hoisted.loadAuthStateMock.mock.calls.length).toBe(callsBefore);
   });
 });

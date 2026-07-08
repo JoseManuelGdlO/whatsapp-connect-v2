@@ -252,7 +252,6 @@ export function DevicesPage() {
                   ) {
                     return;
                   }
-                  await apiJson(`/devices/${selected.id}/disconnect`, token!, { method: 'POST' });
                   await apiJson(`/devices/${selected.id}/reset-session`, token!, { method: 'POST' });
                   alert('WhatsApp desvinculado. Escanea un QR o usa el código para conectar.');
                 }}

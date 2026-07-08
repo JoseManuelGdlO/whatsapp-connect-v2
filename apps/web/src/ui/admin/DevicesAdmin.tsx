@@ -141,7 +141,6 @@ export function DevicesAdmin({ token, tenantIdOverride }: { token: string; tenan
       return;
     }
     try {
-      await apiJson(`/devices/${device.id}/disconnect`, token, { method: 'POST' });
       await apiJson(`/devices/${device.id}/reset-session`, token, { method: 'POST' });
       setMsg('WhatsApp desvinculado. Escanea un QR o usa el código para conectar.');
       setSelectedId(device.id);

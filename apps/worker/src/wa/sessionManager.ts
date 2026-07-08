@@ -2,7 +2,7 @@ import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion } from '@whis
 import type { WASocket, proto } from '@whiskeysockets/baileys';
 
 import { prisma } from '../lib/prisma.js';
-import { loadAuthState } from './authStateDb.js';
+import { loadAuthState, disposeAuthStateSaves, deletePersistedAuthState } from './authStateDb.js';
 import { handleMessagesUpsert } from './inbound.js';
 import { phoneDigitsFromPnJid } from './normalize.js';
 import { sanitizePairingPhone } from './pairingPhone.js';
@@ -68,6 +68,36 @@ export class SessionManager {
   private lastClearReconnectAt = new Map<string, number>();
   /** Tracks reconnect attempts per device for exponential backoff. Reset when connection opens. */
   private reconnectAttempts = new Map<string, number>();
+  private reconnectTimers = new Map<string, NodeJS.Timeout>();
+
+  private clearReconnectTimer(deviceId: string): void {
+    const timer = this.reconnectTimers.get(deviceId);
+    if (timer) {
+      clearTimeout(timer);
+      this.reconnectTimers.delete(deviceId);
+    }
+  }
+
+  private scheduleReconnect(deviceId: string, delayMs: number): void {
+    this.clearReconnectTimer(deviceId);
+    const timer = setTimeout(() => {
+      this.reconnectTimers.delete(deviceId);
+      void this.connect(deviceId);
+    }, delayMs);
+    this.reconnectTimers.set(deviceId, timer);
+  }
+
+  private async persistDeviceOffline(deviceId: string): Promise<void> {
+    await prisma.device.update({
+      where: { id: deviceId },
+      data: { status: 'OFFLINE', qr: null, pairingCode: null, lastError: null }
+    });
+  }
+
+  private async purgePersistedAuthState(deviceId: string): Promise<void> {
+    disposeAuthStateSaves(deviceId);
+    await deletePersistedAuthState(deviceId);
+  }
 
   private async getVersion(): Promise<[number, number, number] | undefined> {
     if (this.cachedVersion) return this.cachedVersion;
@@ -153,7 +183,8 @@ export class SessionManager {
       if (sanitizedPhone) {
         const existing = await prisma.waSession.findUnique({ where: { deviceId } });
         if (existing?.authStateEnc) {
-          await prisma.waSession.deleteMany({ where: { deviceId } });
+          disposeAuthStateSaves(deviceId);
+          await deletePersistedAuthState(deviceId);
           await logger
             .info('Cleared WaSession before pairing-code connect', { deviceId })
             .catch(() => {});
@@ -405,10 +436,17 @@ export class SessionManager {
               RECONNECT_INITIAL_DELAY_MS * Math.pow(2, attempts),
               RECONNECT_MAX_DELAY_MS
             );
-            setTimeout(() => void this.connect(deviceId), delay);
+            this.scheduleReconnect(deviceId, delay);
           } else {
+            this.clearReconnectTimer(deviceId);
             this.reconnectAttempts.delete(deviceId);
+            this.lastClearReconnectAt.delete(deviceId);
+            current.closing = true;
             this.sessions.delete(deviceId);
+            await this.purgePersistedAuthState(deviceId);
+            await logger
+              .info('WhatsApp session cleared after loggedOut from phone', { deviceId })
+              .catch(() => {});
           }
         }
       } catch (err: any) {
@@ -494,7 +532,7 @@ export class SessionManager {
             // Ignore errors during disconnect
           }
           // Reconnect after a short delay to allow state to be cleared
-          setTimeout(() => void this.connect(deviceId), 5000);
+          this.scheduleReconnect(deviceId, 5000);
         }
         return true; // Error was handled
       }
@@ -578,9 +616,36 @@ export class SessionManager {
     // or cause a connection.close event. We handle both cases above.
   }
 
-  /** Cierra socket y elimina sesión en memoria; actualiza Device a OFFLINE en BD. */
-  async disconnect(deviceId: string) {
+  /** Cierra socket, cancela saves/reconnects y borra WaSession persistida. */
+  async resetSession(deviceId: string): Promise<void> {
+    this.clearReconnectTimer(deviceId);
     this.reconnectAttempts.delete(deviceId);
+    this.lastClearReconnectAt.delete(deviceId);
+
+    const entry = this.sessions.get(deviceId);
+    if (entry) {
+      entry.closing = true;
+      try {
+        entry.socket.end(new Error('reset-session'));
+      } catch {
+        // ignore
+      } finally {
+        this.sessions.delete(deviceId);
+      }
+    }
+
+    await this.purgePersistedAuthState(deviceId);
+    await this.persistDeviceOffline(deviceId);
+
+    await logger.info('WhatsApp session reset (unlinked)', { deviceId }).catch(() => {});
+  }
+
+  /** Cierra socket y elimina sesión en memoria; actualiza Device a OFFLINE en BD. */
+  async disconnect(deviceId: string): Promise<void> {
+    this.clearReconnectTimer(deviceId);
+    this.reconnectAttempts.delete(deviceId);
+    disposeAuthStateSaves(deviceId);
+
     const entry = this.sessions.get(deviceId);
     if (!entry) return;
     entry.closing = true;

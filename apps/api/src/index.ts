@@ -675,12 +675,12 @@ app.post(
     if (!device) return res.status(404).json({ error: 'not_found' });
     if (!scope.isSuperadmin && device.tenantId !== scope.tenantId) return res.status(403).json({ error: 'forbidden' });
 
-    // Best-effort: caller should disconnect first; this removes persisted WA auth state.
-    await prisma.waSession.deleteMany({ where: { deviceId: device.id } });
-    await prisma.device.update({
-      where: { id: device.id },
-      data: { status: 'OFFLINE', qr: null, pairingCode: null, lastError: null }
-    });
+    // Worker closes socket, cancels pending auth saves, and deletes WaSession atomically.
+    await deviceCommandsQueue.add(
+      'reset-session',
+      { deviceId: device.id },
+      { removeOnComplete: true, removeOnFail: false }
+    );
     res.json({ ok: true });
   })
 );

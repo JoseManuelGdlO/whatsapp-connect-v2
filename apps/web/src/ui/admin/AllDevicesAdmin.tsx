@@ -95,7 +95,6 @@ export function AllDevicesAdmin({ token }: { token: string }) {
     }
     setDeviceActionLoading(device.id);
     try {
-      await apiJson(`/devices/${device.id}/disconnect`, token, { method: 'POST' });
       await apiJson(`/devices/${device.id}/reset-session`, token, { method: 'POST' });
       const list = await apiJson<Device[]>(`/devices?tenantId=${encodeURIComponent(tenantId)}`, token);
       setDevicesByTenant((prev) => ({ ...prev, [tenantId]: list.map(normalizeDevice) }));

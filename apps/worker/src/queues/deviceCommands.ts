@@ -36,6 +36,12 @@ export function startDeviceCommandsWorker() {
           return;
         }
 
+        if (job.name === 'reset-session') {
+          await logger.info(`Resetting WhatsApp session for device ${deviceId}`, { deviceId }).catch(() => {});
+          await sessionManager.resetSession(deviceId);
+          return;
+        }
+
         if (job.name === 'reset-sender-sessions') {
           const jids = (job.data as JobData).jids ?? [];
           await logger.info(`Resetting sender sessions for device ${deviceId}`, {
