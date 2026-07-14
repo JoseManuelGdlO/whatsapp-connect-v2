@@ -154,4 +154,67 @@ describe('normalizeInboundMessage', () => {
 
     expect(normalized.adContext).toBeNull();
   });
+
+  it('no marca adContext en preview de link (solo title/body/url)', () => {
+    const normalized = normalizeInboundMessage({
+      deviceJid: null,
+      message: {
+        key: {
+          id: 'm-link-preview',
+          remoteJid: '5216183610698@s.whatsapp.net',
+          fromMe: false
+        } as TestMessageKey,
+        message: {
+          extendedTextMessage: {
+            text: 'mira este auto https://example.com/versa',
+            contextInfo: {
+              externalAdReply: {
+                title: 'Nissan Versa 2020',
+                body: 'Ficha del Versa en stock',
+                sourceUrl: 'https://example.com/versa',
+                mediaUrl: 'https://cdn.example/preview.jpg'
+              }
+            }
+          }
+        }
+      }
+    });
+
+    expect(normalized.adContext).toBeNull();
+  });
+
+  it('detecta CTWA por entryPointConversionSource sin externalAdReply', () => {
+    const normalized = normalizeInboundMessage({
+      deviceJid: null,
+      message: {
+        key: {
+          id: 'm-ctwa-entry',
+          remoteJid: '5216183610698@s.whatsapp.net',
+          fromMe: false
+        } as TestMessageKey,
+        message: {
+          extendedTextMessage: {
+            text: 'Hola! Quiero más información',
+            contextInfo: {
+              entryPointConversionSource: 'ctwa_ad',
+              conversionSource: 'FB_Ads',
+              entryPointConversionApp: 'instagram'
+            }
+          }
+        }
+      }
+    });
+
+    expect(normalized.adContext).toEqual({
+      isAd: true,
+      title: null,
+      body: null,
+      sourceId: null,
+      sourceUrl: null,
+      sourceApp: 'instagram',
+      ctwaClid: null,
+      mediaUrl: null,
+      greetingMessageBody: null
+    });
+  });
 });

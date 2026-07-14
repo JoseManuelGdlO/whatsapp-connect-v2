@@ -69,15 +69,34 @@ function getContextInfo(msg: proto.IMessage | undefined): any | null {
   return null;
 }
 
-function isCtwaExternalAdReply(externalAdReply: any): boolean {
+function isAdSourceType(value: unknown): boolean {
+  return asNullableString(value)?.toLowerCase() === 'ad';
+}
+
+function isFbAdsConversionSource(value: unknown): boolean {
+  const normalized = asNullableString(value)?.toLowerCase().replace(/-/g, '_');
+  return normalized === 'fb_ads' || normalized === 'facebook_ads' || normalized === 'ig_ads';
+}
+
+function isCtwaEntryPoint(value: unknown): boolean {
+  const normalized = asNullableString(value)?.toLowerCase().replace(/-/g, '_');
+  return normalized === 'ctwa_ad' || normalized === 'ctwa';
+}
+
+/** Strong CTWA/Meta signals only; title/body/url alone must not count (link previews). */
+function hasStrongAdCampaignSignal(contextInfo: any, externalAdReply: any): boolean {
+  if (contextInfo && typeof contextInfo === 'object') {
+    if (isCtwaEntryPoint(contextInfo.entryPointConversionSource)) return true;
+    if (isFbAdsConversionSource(contextInfo.conversionSource)) return true;
+    if (isFbAdsConversionSource(contextInfo.entryPointConversionExternalSource)) return true;
+    if (asNullableString(contextInfo.ctwaPayload)) return true;
+  }
   if (!externalAdReply || typeof externalAdReply !== 'object') return false;
   if (asNullableString(externalAdReply.ctwaClid)) return true;
   if (externalAdReply.showAdAttribution === true) return true;
-  if (asNullableString(externalAdReply.sourceType)) return true;
-  if (externalAdReply.adType != null) return true;
-  if (asNullableString(externalAdReply.sourceId)) return true;
-  if (asNullableString(externalAdReply.title) || asNullableString(externalAdReply.body)) return true;
-  if (asNullableString(externalAdReply.sourceUrl) || asNullableString(externalAdReply.mediaUrl)) return true;
+  if (externalAdReply.alwaysShowAdAttribution === true) return true;
+  if (isAdSourceType(externalAdReply.sourceType)) return true;
+  if (externalAdReply.adType != null && externalAdReply.adType !== '') return true;
   return false;
 }
 
@@ -99,7 +118,7 @@ export function extractAdContext(msg: proto.IMessage | undefined): AdContext | n
   if (!contextInfo) return null;
 
   const externalAdReply = contextInfo.externalAdReply;
-  if (isCtwaExternalAdReply(externalAdReply)) {
+  if (externalAdReply && hasStrongAdCampaignSignal(contextInfo, externalAdReply)) {
     return {
       isAd: true,
       title: asNullableString(externalAdReply.title),
@@ -110,6 +129,20 @@ export function extractAdContext(msg: proto.IMessage | undefined): AdContext | n
       ctwaClid: asNullableString(externalAdReply.ctwaClid),
       mediaUrl: asNullableString(externalAdReply.mediaUrl),
       greetingMessageBody: asNullableString(externalAdReply.greetingMessageBody)
+    };
+  }
+
+  if (hasStrongAdCampaignSignal(contextInfo, null)) {
+    return {
+      isAd: true,
+      title: null,
+      body: null,
+      sourceId: null,
+      sourceUrl: null,
+      sourceApp: asNullableString(contextInfo.entryPointConversionApp),
+      ctwaClid: null,
+      mediaUrl: null,
+      greetingMessageBody: null
     };
   }
 
