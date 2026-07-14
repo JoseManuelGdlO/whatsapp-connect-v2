@@ -72,6 +72,7 @@ describe('normalizeInboundMessage', () => {
 
     expect(normalized.from).toBe('60911863783463@lid');
     expect(normalized.fromPhone).toBe('5216183610698');
+    expect(normalized.adContext).toBeNull();
   });
 
   it('rellena fromPhone en chats PN clásicos', () => {
@@ -90,5 +91,67 @@ describe('normalizeInboundMessage', () => {
 
     expect(normalized.from).toBe('5216183610698@s.whatsapp.net');
     expect(normalized.fromPhone).toBe('5216183610698');
+    expect(normalized.adContext).toBeNull();
+  });
+
+  it('extrae adContext de externalAdReply CTWA', () => {
+    const normalized = normalizeInboundMessage({
+      deviceJid: null,
+      message: {
+        key: {
+          id: 'm-ad-1',
+          remoteJid: '5216183610698@s.whatsapp.net',
+          fromMe: false
+        } as TestMessageKey,
+        message: {
+          extendedTextMessage: {
+            text: 'Hola! Quiero más información',
+            contextInfo: {
+              externalAdReply: {
+                title: 'Nissan Versa 2020',
+                body: 'Estas vacaciones merecen un Versa listo para entregar',
+                sourceType: 'ad',
+                sourceId: 'ad-123',
+                sourceUrl: 'https://fb.me/ad',
+                sourceApp: 'facebook',
+                ctwaClid: 'clid-abc',
+                mediaUrl: 'https://cdn.example/ad.jpg',
+                showAdAttribution: true,
+                greetingMessageBody: 'Hola! Quiero más información'
+              }
+            }
+          }
+        }
+      }
+    });
+
+    expect(normalized.content.text).toBe('Hola! Quiero más información');
+    expect(normalized.adContext).toEqual({
+      isAd: true,
+      title: 'Nissan Versa 2020',
+      body: 'Estas vacaciones merecen un Versa listo para entregar',
+      sourceId: 'ad-123',
+      sourceUrl: 'https://fb.me/ad',
+      sourceApp: 'facebook',
+      ctwaClid: 'clid-abc',
+      mediaUrl: 'https://cdn.example/ad.jpg',
+      greetingMessageBody: 'Hola! Quiero más información'
+    });
+  });
+
+  it('no inventa adContext en mensajes normales con texto comercial', () => {
+    const normalized = normalizeInboundMessage({
+      deviceJid: null,
+      message: {
+        key: {
+          id: 'm-no-ad',
+          remoteJid: '5216183610698@s.whatsapp.net',
+          fromMe: false
+        } as TestMessageKey,
+        message: { conversation: 'Quiero info del Nissan Versa 2020' }
+      }
+    });
+
+    expect(normalized.adContext).toBeNull();
   });
 });

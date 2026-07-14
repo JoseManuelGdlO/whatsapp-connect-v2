@@ -37,6 +37,104 @@ function getMediaMeta(msg: proto.IMessage | undefined) {
   return null;
 }
 
+const asNullableString = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+/** Pull contextInfo from common Baileys message wrappers. */
+function getContextInfo(msg: proto.IMessage | undefined): any | null {
+  if (!msg) return null;
+  const anyMsg: any = msg as any;
+  const candidates = [
+    anyMsg.extendedTextMessage?.contextInfo,
+    anyMsg.imageMessage?.contextInfo,
+    anyMsg.videoMessage?.contextInfo,
+    anyMsg.documentMessage?.contextInfo,
+    anyMsg.buttonsResponseMessage?.contextInfo,
+    anyMsg.templateButtonReplyMessage?.contextInfo,
+    anyMsg.listResponseMessage?.contextInfo,
+    anyMsg.buttonsMessage?.contextInfo,
+    anyMsg.templateMessage?.contextInfo,
+    anyMsg.interactiveMessage?.contextInfo,
+    anyMsg.ephemeralMessage?.message && getContextInfo(anyMsg.ephemeralMessage.message),
+    anyMsg.viewOnceMessage?.message && getContextInfo(anyMsg.viewOnceMessage.message),
+    anyMsg.viewOnceMessageV2?.message && getContextInfo(anyMsg.viewOnceMessageV2.message),
+    anyMsg.documentWithCaptionMessage?.message && getContextInfo(anyMsg.documentWithCaptionMessage.message)
+  ];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object') return candidate;
+  }
+  return null;
+}
+
+function isCtwaExternalAdReply(externalAdReply: any): boolean {
+  if (!externalAdReply || typeof externalAdReply !== 'object') return false;
+  if (asNullableString(externalAdReply.ctwaClid)) return true;
+  if (externalAdReply.showAdAttribution === true) return true;
+  if (asNullableString(externalAdReply.sourceType)) return true;
+  if (externalAdReply.adType != null) return true;
+  if (asNullableString(externalAdReply.sourceId)) return true;
+  if (asNullableString(externalAdReply.title) || asNullableString(externalAdReply.body)) return true;
+  if (asNullableString(externalAdReply.sourceUrl) || asNullableString(externalAdReply.mediaUrl)) return true;
+  return false;
+}
+
+export type AdContext = {
+  isAd: true;
+  title: string | null;
+  body: string | null;
+  sourceId: string | null;
+  sourceUrl: string | null;
+  sourceApp: string | null;
+  ctwaClid: string | null;
+  mediaUrl: string | null;
+  greetingMessageBody: string | null;
+};
+
+/** Extract Click-to-WhatsApp / Meta ad metadata when present. */
+export function extractAdContext(msg: proto.IMessage | undefined): AdContext | null {
+  const contextInfo = getContextInfo(msg);
+  if (!contextInfo) return null;
+
+  const externalAdReply = contextInfo.externalAdReply;
+  if (isCtwaExternalAdReply(externalAdReply)) {
+    return {
+      isAd: true,
+      title: asNullableString(externalAdReply.title),
+      body: asNullableString(externalAdReply.body),
+      sourceId: asNullableString(externalAdReply.sourceId),
+      sourceUrl: asNullableString(externalAdReply.sourceUrl),
+      sourceApp: asNullableString(externalAdReply.sourceApp),
+      ctwaClid: asNullableString(externalAdReply.ctwaClid),
+      mediaUrl: asNullableString(externalAdReply.mediaUrl),
+      greetingMessageBody: asNullableString(externalAdReply.greetingMessageBody)
+    };
+  }
+
+  const quotedAd = contextInfo.quotedAd;
+  if (quotedAd && typeof quotedAd === 'object') {
+    const caption = asNullableString(quotedAd.caption);
+    const advertiserName = asNullableString(quotedAd.advertiserName);
+    if (caption || advertiserName) {
+      return {
+        isAd: true,
+        title: advertiserName,
+        body: caption,
+        sourceId: null,
+        sourceUrl: null,
+        sourceApp: null,
+        ctwaClid: null,
+        mediaUrl: null,
+        greetingMessageBody: null
+      };
+    }
+  }
+
+  return null;
+}
+
 export type NormalizedInboundMessage = {
   kind: 'inbound_message';
   messageId: string;
@@ -51,6 +149,8 @@ export type NormalizedInboundMessage = {
     text: string | null;
     media: any | null;
   };
+  /** Present only for Click-to-WhatsApp / Meta ad entry messages. */
+  adContext: AdContext | null;
 };
 
 /** Extract national/international digits from a phone JID (`user@s.whatsapp.net`). */
@@ -124,6 +224,7 @@ export function normalizeInboundMessage(params: {
 
   const text = getText(m.message ?? undefined);
   const media = getMediaMeta(m.message ?? undefined);
+  const adContext = extractAdContext(m.message ?? undefined);
   const isStub = (m as { messageStubType?: number }).messageStubType != null;
 
   const type: 'text' | 'media' | 'unknown' | 'stub' = isStub
@@ -141,7 +242,8 @@ export function normalizeInboundMessage(params: {
     fromPhone,
     to,
     timestamp,
-    content: { type, text, media }
+    content: { type, text, media },
+    adContext
   };
 }
 
