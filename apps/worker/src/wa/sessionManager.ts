@@ -39,6 +39,14 @@ const CLEAR_RECONNECT_DEBOUNCE_MS = 10 * 60 * 1000; // 10 minutes
 const RECONNECT_INITIAL_DELAY_MS = 5000;
 const RECONNECT_MAX_DELAY_MS = 5 * 60 * 1000; // 5 minutes
 
+/** Alert if device stays offline (reconnect loop) longer than this. Default 10 minutes. */
+const DEFAULT_OFFLINE_ALERT_AFTER_MS = 10 * 60 * 1000;
+
+function offlineAlertAfterMs(): number {
+  const raw = Number(process.env.DEVICE_OFFLINE_ALERT_AFTER_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_OFFLINE_ALERT_AFTER_MS;
+}
+
 type DisconnectInfo = {
   statusCode?: number;
   reason?: string;
@@ -69,6 +77,8 @@ export class SessionManager {
   /** Tracks reconnect attempts per device for exponential backoff. Reset when connection opens. */
   private reconnectAttempts = new Map<string, number>();
   private reconnectTimers = new Map<string, NodeJS.Timeout>();
+  /** One timer per device: fires if still OFFLINE after continuous reconnect streak. */
+  private offlineAlertTimers = new Map<string, NodeJS.Timeout>();
 
   private clearReconnectTimer(deviceId: string): void {
     const timer = this.reconnectTimers.get(deviceId);
@@ -78,8 +88,45 @@ export class SessionManager {
     }
   }
 
+  private clearOfflineUnrecoveredAlert(deviceId: string): void {
+    const timer = this.offlineAlertTimers.get(deviceId);
+    if (timer) {
+      clearTimeout(timer);
+      this.offlineAlertTimers.delete(deviceId);
+    }
+  }
+
+  private armOfflineUnrecoveredAlert(deviceId: string): void {
+    if (this.offlineAlertTimers.has(deviceId)) return;
+    const afterMs = offlineAlertAfterMs();
+    const timer = setTimeout(() => {
+      this.offlineAlertTimers.delete(deviceId);
+      void this.fireOfflineUnrecoveredAlert(deviceId, afterMs);
+    }, afterMs);
+    this.offlineAlertTimers.set(deviceId, timer);
+  }
+
+  private async fireOfflineUnrecoveredAlert(deviceId: string, afterMs: number): Promise<void> {
+    try {
+      const device = await prisma.device.findUnique({ where: { id: deviceId } }).catch(() => null);
+      if (!device || device.status === 'ONLINE') return;
+
+      const minutes = Math.max(1, Math.round(afterMs / 60_000));
+      const reason = `offline_unrecovered_after_${minutes}m`;
+      await sendDeviceDisconnectAlert(deviceId, reason, {
+        label: device.label ?? undefined,
+        tenantId: device.tenantId ?? undefined,
+        severity: 'error',
+        logContext: { willReconnect: true }
+      });
+    } catch {
+      // Alert failures must not affect reconnect loop
+    }
+  }
+
   private scheduleReconnect(deviceId: string, delayMs: number): void {
     this.clearReconnectTimer(deviceId);
+    this.armOfflineUnrecoveredAlert(deviceId);
     const timer = setTimeout(() => {
       this.reconnectTimers.delete(deviceId);
       void this.connect(deviceId);
@@ -363,6 +410,7 @@ export class SessionManager {
 
         if (connection === 'open') {
           this.reconnectAttempts.set(deviceId, 0); // Reset backoff on successful connect
+          this.clearOfflineUnrecoveredAlert(deviceId);
           const openData: {
             status: 'ONLINE';
             qr: null;
@@ -439,6 +487,7 @@ export class SessionManager {
             this.scheduleReconnect(deviceId, delay);
           } else {
             this.clearReconnectTimer(deviceId);
+            this.clearOfflineUnrecoveredAlert(deviceId);
             this.reconnectAttempts.delete(deviceId);
             this.lastClearReconnectAt.delete(deviceId);
             current.closing = true;
@@ -619,6 +668,7 @@ export class SessionManager {
   /** Cierra socket, cancela saves/reconnects y borra WaSession persistida. */
   async resetSession(deviceId: string): Promise<void> {
     this.clearReconnectTimer(deviceId);
+    this.clearOfflineUnrecoveredAlert(deviceId);
     this.reconnectAttempts.delete(deviceId);
     this.lastClearReconnectAt.delete(deviceId);
 
@@ -643,6 +693,7 @@ export class SessionManager {
   /** Cierra socket y elimina sesión en memoria; actualiza Device a OFFLINE en BD. */
   async disconnect(deviceId: string): Promise<void> {
     this.clearReconnectTimer(deviceId);
+    this.clearOfflineUnrecoveredAlert(deviceId);
     this.reconnectAttempts.delete(deviceId);
     disposeAuthStateSaves(deviceId);
 

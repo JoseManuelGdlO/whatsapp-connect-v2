@@ -63,6 +63,7 @@ services:
       ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM}
       ALERT_EMAIL_TO: ${ALERT_EMAIL_TO}
       DEVICE_ALERT_MIN_LEVEL: ${DEVICE_ALERT_MIN_LEVEL:-error}
+      DEVICE_OFFLINE_ALERT_AFTER_MS: ${DEVICE_OFFLINE_ALERT_AFTER_MS:-600000}
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3030/health',r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
       interval: 30s

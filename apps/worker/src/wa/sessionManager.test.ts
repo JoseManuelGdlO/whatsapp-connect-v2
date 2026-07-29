@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hoisted = vi.hoisted(() => {
   const handlersBySocket: Array<Record<string, Array<(...args: any[]) => any>>> = [];
@@ -43,11 +43,13 @@ const hoisted = vi.hoisted(() => {
       tenantId: string;
       label: string;
       phoneHint: string | null;
+      status: string;
     }> => ({
       id: where.id,
       tenantId: 'tenant-1',
       label: 'Device 1',
-      phoneHint: null
+      phoneHint: null,
+      status: 'OFFLINE'
     }))
   };
 });
@@ -119,12 +121,23 @@ vi.mock('@wc/alert', () => {
   };
 });
 
+import { sendDeviceDisconnectAlert } from '@wc/alert';
+
+function offlineUnrecoveredAlertCalls() {
+  return vi.mocked(sendDeviceDisconnectAlert).mock.calls.filter(
+    ([, reason]) => typeof reason === 'string' && reason.startsWith('offline_unrecovered')
+  );
+}
+
 describe('SessionManager', () => {
+  const prevOfflineAlertAfter = process.env.DEVICE_OFFLINE_ALERT_AFTER_MS;
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     hoisted.handlersBySocket.length = 0;
     hoisted.sockets.length = 0;
+    delete process.env.DEVICE_OFFLINE_ALERT_AFTER_MS;
 
     hoisted.saveMock.mockImplementation(async () => {});
     hoisted.saveImmediateMock.mockImplementation(async () => {});
@@ -140,8 +153,18 @@ describe('SessionManager', () => {
       id: where.id,
       tenantId: 'tenant-1',
       label: 'Device 1',
-      phoneHint: null
+      phoneHint: null,
+      status: 'OFFLINE'
     }));
+  });
+
+  afterEach(() => {
+    if (prevOfflineAlertAfter === undefined) {
+      delete process.env.DEVICE_OFFLINE_ALERT_AFTER_MS;
+    } else {
+      process.env.DEVICE_OFFLINE_ALERT_AFTER_MS = prevOfflineAlertAfter;
+    }
+    vi.useRealTimers();
   });
 
   it('aplica debounce para clearSenderAndReconnect', async () => {
@@ -293,7 +316,8 @@ describe('SessionManager', () => {
       id: where.id,
       tenantId: 'tenant-1',
       label: 'Device 1',
-      phoneHint: '5216183610698'
+      phoneHint: '5216183610698',
+      status: 'OFFLINE'
     }));
 
     const { SessionManager } = await import('./sessionManager.js');
@@ -507,5 +531,87 @@ describe('SessionManager', () => {
     const callsBefore = hoisted.loadAuthStateMock.mock.calls.length;
     await vi.advanceTimersByTimeAsync(60000);
     expect(hoisted.loadAuthStateMock.mock.calls.length).toBe(callsBefore);
+  });
+
+  it('no envía offline_unrecovered si recupera ONLINE antes del umbral', async () => {
+    process.env.DEVICE_OFFLINE_ALERT_AFTER_MS = '10000';
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-offline-recover');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    await onConnectionUpdate?.({
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 500 }, message: 'closed' } }
+    });
+
+    await vi.advanceTimersByTimeAsync(4000);
+    await onConnectionUpdate?.({ connection: 'open' });
+    await vi.advanceTimersByTimeAsync(20000);
+
+    expect(offlineUnrecoveredAlertCalls()).toHaveLength(0);
+  });
+
+  it('envía offline_unrecovered con severity error si no recupera tras el umbral', async () => {
+    process.env.DEVICE_OFFLINE_ALERT_AFTER_MS = '10000';
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-offline-unrecovered');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    await onConnectionUpdate?.({
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 500 }, message: 'closed' } }
+    });
+
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(offlineUnrecoveredAlertCalls()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(offlineUnrecoveredAlertCalls()).toHaveLength(1);
+    expect(offlineUnrecoveredAlertCalls()[0]).toEqual([
+      'device-offline-unrecovered',
+      'offline_unrecovered_after_1m',
+      expect.objectContaining({
+        severity: 'error',
+        logContext: expect.objectContaining({ willReconnect: true })
+      })
+    ]);
+  });
+
+  it('disconnect intencional no arma alerta offline_unrecovered', async () => {
+    process.env.DEVICE_OFFLINE_ALERT_AFTER_MS = '10000';
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-offline-disconnect');
+
+    await manager.disconnect('device-offline-disconnect');
+    await vi.advanceTimersByTimeAsync(20000);
+
+    expect(offlineUnrecoveredAlertCalls()).toHaveLength(0);
+  });
+
+  it('loggedOut no arma alerta offline_unrecovered', async () => {
+    process.env.DEVICE_OFFLINE_ALERT_AFTER_MS = '10000';
+    const { SessionManager } = await import('./sessionManager.js');
+    const manager = new SessionManager();
+    await manager.connect('device-offline-logged-out');
+
+    const handlers = hoisted.handlersBySocket[0];
+    const onConnectionUpdate = handlers['connection.update']?.[0];
+    await onConnectionUpdate?.({
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 401 }, message: 'logged-out' } }
+    });
+
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(offlineUnrecoveredAlertCalls()).toHaveLength(0);
+    expect(sendDeviceDisconnectAlert).toHaveBeenCalledWith(
+      'device-offline-logged-out',
+      expect.any(String),
+      expect.objectContaining({ severity: 'error' })
+    );
   });
 });
