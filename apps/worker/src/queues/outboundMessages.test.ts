@@ -284,4 +284,66 @@ describe('outboundMessages worker media dispatch', () => {
     expect(hoisted.sendMessageMock).toHaveBeenCalledTimes(1);
     expect(hoisted.sendPresenceUpdateMock).toHaveBeenCalled();
   });
+
+  it('envia status_image a status@broadcast con broadcast y statusJidList', async () => {
+    const { startOutboundMessagesWorker } = await import('./outboundMessages.js');
+    startOutboundMessagesWorker();
+    const processor = hoisted.getProcessor();
+    expect(processor).toBeTypeOf('function');
+
+    const statusJidList = ['5216181234567@s.whatsapp.net', '123456789012345@lid'];
+    hoisted.rowById.set('out-status', {
+      id: 'out-status',
+      tenantId: 'tenant-1',
+      deviceId: 'device-1',
+      to: 'status@broadcast',
+      type: 'status_image',
+      payloadJson: {
+        imageUrl: 'https://cdn.cliente.com/estado.jpg',
+        caption: 'Texto del estado',
+        statusJidList
+      },
+      createdAt: new Date()
+    });
+
+    await processor?.({ id: 'job-status', data: { outboundMessageId: 'out-status' }, attemptsMade: 0 });
+
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith(
+      'status@broadcast',
+      { image: { url: 'https://cdn.cliente.com/estado.jpg' }, caption: 'Texto del estado' },
+      expect.objectContaining({
+        broadcast: true,
+        statusJidList,
+        mediaUploadTimeoutMs: expect.any(Number)
+      })
+    );
+    expect(hoisted.sendPresenceUpdateMock).not.toHaveBeenCalled();
+    expect(hoisted.drainPendingReadMock).not.toHaveBeenCalled();
+    expect(hoisted.readMessagesMock).not.toHaveBeenCalled();
+    expect(hoisted.callOrder).toEqual(['sendMessage']);
+  });
+
+  it('falla status_image con statusJidList vacio sin llamar sendMessage', async () => {
+    const { startOutboundMessagesWorker } = await import('./outboundMessages.js');
+    startOutboundMessagesWorker();
+    const processor = hoisted.getProcessor();
+
+    hoisted.rowById.set('out-status-empty', {
+      id: 'out-status-empty',
+      tenantId: 'tenant-1',
+      deviceId: 'device-1',
+      to: 'status@broadcast',
+      type: 'status_image',
+      payloadJson: {
+        imageUrl: 'https://cdn.cliente.com/estado.jpg',
+        statusJidList: []
+      },
+      createdAt: new Date()
+    });
+
+    await expect(
+      processor?.({ id: 'job-status-empty', data: { outboundMessageId: 'out-status-empty' }, attemptsMade: 0 })
+    ).rejects.toThrow('status_jid_list_empty');
+    expect(hoisted.sendMessageMock).not.toHaveBeenCalled();
+  });
 });

@@ -83,4 +83,49 @@ describe('sendMessageBodySchema', () => {
       })
     ).toThrow();
   });
+
+  it('acepta status_image con statusJidList y caption opcional', () => {
+    const parsed = sendMessageBodySchema.parse({
+      type: 'status_image',
+      imageUrl: 'https://cdn.cliente.com/estado.jpg',
+      caption: 'Texto del estado',
+      statusJidList: ['5216181234567@s.whatsapp.net', '123456789012345@lid']
+    });
+
+    expect(parsed.type).toBe('status_image');
+    if (parsed.type !== 'status_image') throw new Error('Expected status_image payload');
+    expect(parsed.imageUrl).toContain('cdn.cliente.com');
+    expect(parsed.statusJidList).toHaveLength(2);
+    expect(parsed.caption).toBe('Texto del estado');
+  });
+
+  it('rechaza status_image con statusJidList vacio', () => {
+    expect(() =>
+      sendMessageBodySchema.parse({
+        type: 'status_image',
+        imageUrl: 'https://cdn.cliente.com/estado.jpg',
+        statusJidList: []
+      })
+    ).toThrow();
+  });
+
+  it('rechaza status_image con imageUrl no http/https', () => {
+    expect(() =>
+      sendMessageBodySchema.parse({
+        type: 'status_image',
+        imageUrl: 'file:///tmp/estado.jpg',
+        statusJidList: ['5216181234567@s.whatsapp.net']
+      })
+    ).toThrow();
+  });
+
+  it('rechaza status_image con mas de 500 jids', () => {
+    expect(() =>
+      sendMessageBodySchema.parse({
+        type: 'status_image',
+        imageUrl: 'https://cdn.cliente.com/estado.jpg',
+        statusJidList: Array.from({ length: 501 }, (_, i) => `${5216000000000 + i}@s.whatsapp.net`)
+      })
+    ).toThrow();
+  });
 });

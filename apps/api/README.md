@@ -36,6 +36,12 @@ Cuando llega un inbound por webhook, tu bot puede responder enviando un mensaje 
   - `documentUrl`: URL pública `http/https` accesible desde el worker
   - `fileName` (opcional, default `document.pdf`; debe terminar en `.pdf`)
   - `caption` (opcional)
+- Body (`type: "status_image"` — estado/historia):
+  - **sin `to`**: el worker siempre publica en `status@broadcast`
+  - `imageUrl`: URL pública `http/https` accesible desde el worker (no ruta local)
+  - `caption` (opcional)
+  - `statusJidList`: **obligatorio**, array con al menos 1 JID (máx. 500). Lo arma el bot (CRM, inbound `normalized.from`, segmento, etc.). Si va vacío, el estado se publica pero nadie lo ve.
+  - Nota LID vs número: usa el mismo JID con el que ya conversan (`...@lid` o `...@s.whatsapp.net`); si el chat real es `@lid` y solo mandas el número, esa persona puede no ver el estado.
 
 Ejemplo:
 
@@ -57,6 +63,12 @@ curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
   -H "x-api-key: $BOT_API_KEY" \
   -H "x-tenant-id: $TENANT_ID" \
   -d '{"to":"'"$FROM_JID"'","type":"document","documentUrl":"https://example.com/cotizacion.pdf","fileName":"cotizacion.pdf","caption":"Tu cotizacion esta lista"}'
+
+curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
+  -H "content-type: application/json" \
+  -H "x-api-key: $BOT_API_KEY" \
+  -H "x-tenant-id: $TENANT_ID" \
+  -d '{"type":"status_image","imageUrl":"https://cdn.cliente.com/estado.jpg","caption":"Texto del estado","statusJidList":["'"$FROM_JID"'"]}'
 ```
 
 ## Troubleshooting- **401 `invalid_api_key`**: el header `x-api-key` no coincide con `BOT_API_KEY` del API.

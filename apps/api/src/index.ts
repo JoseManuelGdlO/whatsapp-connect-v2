@@ -1065,17 +1065,24 @@ app.post(
     data: {
       tenantId: device.tenantId,
       deviceId: device.id,
-      to: toJid(body.to),
+      to: body.type === 'status_image' ? 'status@broadcast' : toJid(body.to),
       type: body.type,
-      payloadJson: body.type === 'text'
-        ? { text: body.text }
-        : body.type === 'image'
-          ? { imageUrl: body.imageUrl, caption: body.caption ?? null }
-          : {
-              documentUrl: body.documentUrl,
-              fileName: body.fileName ?? 'document.pdf',
-              caption: body.caption ?? null
-            },
+      payloadJson:
+        body.type === 'text'
+          ? { text: body.text }
+          : body.type === 'image'
+            ? { imageUrl: body.imageUrl, caption: body.caption ?? null }
+            : body.type === 'status_image'
+              ? {
+                  imageUrl: body.imageUrl,
+                  caption: body.caption ?? null,
+                  statusJidList: body.statusJidList.map(toJid)
+                }
+              : {
+                  documentUrl: body.documentUrl,
+                  fileName: body.fileName ?? 'document.pdf',
+                  caption: body.caption ?? null
+                },
       isTest: body.isTest ?? false
     }
   });
@@ -1085,7 +1092,24 @@ app.post(
     { outboundMessageId: row.id },
     { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, removeOnComplete: true }
   );
-  console.log('[paso-7] Mensaje outbound encolado (API)', { outboundMessageId: row.id, to: row.to, deviceId: row.deviceId });
+  if (body.type === 'status_image') {
+    let mediaDomain: string | null = null;
+    try {
+      mediaDomain = new URL(body.imageUrl).hostname;
+    } catch {
+      mediaDomain = null;
+    }
+    console.log('[paso-7] Mensaje outbound encolado (API)', {
+      outboundMessageId: row.id,
+      to: row.to,
+      deviceId: row.deviceId,
+      type: row.type,
+      statusJidCount: body.statusJidList.length,
+      mediaDomain
+    });
+  } else {
+    console.log('[paso-7] Mensaje outbound encolado (API)', { outboundMessageId: row.id, to: row.to, deviceId: row.deviceId });
+  }
 
   res.status(202).json({ outboundMessageId: row.id, status: row.status });
   })
