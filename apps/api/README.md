@@ -40,8 +40,8 @@ Cuando llega un inbound por webhook, tu bot puede responder enviando un mensaje 
   - **sin `to`**: el worker siempre publica en `status@broadcast`
   - `imageUrl`: URL pública `http/https` accesible desde el worker (no ruta local)
   - `caption` (opcional)
-  - `statusJidList`: **obligatorio**, array con al menos 1 JID (máx. 500). Lo arma el bot (CRM, inbound `normalized.from`, segmento, etc.). Si va vacío, el estado se publica pero nadie lo ve.
-  - Nota LID vs número: usa el mismo JID con el que ya conversan (`...@lid` o `...@s.whatsapp.net`); si el chat real es `@lid` y solo mandas el número, esa persona puede no ver el estado.
+  - `statusJidList`: **obligatorio**, array con al menos 1 JID (máx. 500). Lo arma el bot (CRM, inbound `normalized.from`, segmento, etc.). Si va vacío, el estado se publica pero nadie lo ve. El worker añade solo el JID propio del device (PN o LID, alineado con la audiencia) para que “Mi estado” pueda verse en el teléfono emisor; no hace falta incluirlo en el body.
+  - Nota LID vs número: usa el mismo JID con el que ya conversan (`...@lid` o `...@s.whatsapp.net`); si el chat real es `@lid` y solo mandas el número, esa persona puede no ver el estado. No mezcles `@lid` y `@s.whatsapp.net` en la misma lista.
 
 Ejemplo:
 

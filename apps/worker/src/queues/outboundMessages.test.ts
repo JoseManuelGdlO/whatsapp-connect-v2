@@ -20,7 +20,8 @@ const hoisted = vi.hoisted(() => {
     readMessagesMock,
     drainPendingReadMock,
     callOrder,
-    rowById: new Map<string, any>()
+    rowById: new Map<string, any>(),
+    socketUser: { id: 'me@s.whatsapp.net', lid: undefined as string | undefined }
   };
 });
 
@@ -55,7 +56,7 @@ vi.mock('./deviceCommands.js', () => {
   return {
     sessionManager: {
       get: vi.fn(() => ({
-        user: { id: 'me@s.whatsapp.net' },
+        user: hoisted.socketUser,
         sendPresenceUpdate: (state: string, jid: string) => {
           hoisted.callOrder.push(`presence:${state}`);
           return hoisted.sendPresenceUpdateMock(state, jid);
@@ -102,6 +103,7 @@ describe('outboundMessages worker media dispatch', () => {
     hoisted.callOrder.length = 0;
     hoisted.drainPendingReadMock.mockResolvedValue([]);
     hoisted.sendMessageMock.mockResolvedValue({ key: { id: 'provider-1' } });
+    hoisted.socketUser = { id: 'me@s.whatsapp.net', lid: undefined };
   });
 
   it('envia texto con payload text existente', async () => {
@@ -313,7 +315,7 @@ describe('outboundMessages worker media dispatch', () => {
       { image: { url: 'https://cdn.cliente.com/estado.jpg' }, caption: 'Texto del estado' },
       expect.objectContaining({
         broadcast: true,
-        statusJidList,
+        statusJidList: [...statusJidList, 'me@s.whatsapp.net'],
         mediaUploadTimeoutMs: expect.any(Number)
       })
     );
@@ -345,5 +347,64 @@ describe('outboundMessages worker media dispatch', () => {
       processor?.({ id: 'job-status-empty', data: { outboundMessageId: 'out-status-empty' }, attemptsMade: 0 })
     ).rejects.toThrow('status_jid_list_empty');
     expect(hoisted.sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('anexa el JID propio PN a una audiencia solo PN', async () => {
+    const { startOutboundMessagesWorker } = await import('./outboundMessages.js');
+    startOutboundMessagesWorker();
+    const processor = hoisted.getProcessor();
+
+    hoisted.rowById.set('out-status-own', {
+      id: 'out-status-own',
+      tenantId: 'tenant-1',
+      deviceId: 'device-1',
+      to: 'status@broadcast',
+      type: 'status_image',
+      payloadJson: {
+        imageUrl: 'https://cdn.cliente.com/estado.jpg',
+        statusJidList: ['5216181234567@s.whatsapp.net']
+      },
+      createdAt: new Date()
+    });
+
+    await processor?.({ id: 'job-status-own', data: { outboundMessageId: 'out-status-own' }, attemptsMade: 0 });
+
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith(
+      'status@broadcast',
+      expect.anything(),
+      expect.objectContaining({
+        statusJidList: ['5216181234567@s.whatsapp.net', 'me@s.whatsapp.net']
+      })
+    );
+  });
+
+  it('anexa el LID propio a una audiencia solo LID', async () => {
+    hoisted.socketUser = { id: '5216184487125:4@s.whatsapp.net', lid: '15325181567089:4@lid' };
+    const { startOutboundMessagesWorker } = await import('./outboundMessages.js');
+    startOutboundMessagesWorker();
+    const processor = hoisted.getProcessor();
+
+    hoisted.rowById.set('out-status-lid', {
+      id: 'out-status-lid',
+      tenantId: 'tenant-1',
+      deviceId: 'device-1',
+      to: 'status@broadcast',
+      type: 'status_image',
+      payloadJson: {
+        imageUrl: 'https://cdn.cliente.com/estado.jpg',
+        statusJidList: ['60911863783463@lid']
+      },
+      createdAt: new Date()
+    });
+
+    await processor?.({ id: 'job-status-lid', data: { outboundMessageId: 'out-status-lid' }, attemptsMade: 0 });
+
+    expect(hoisted.sendMessageMock).toHaveBeenCalledWith(
+      'status@broadcast',
+      expect.anything(),
+      expect.objectContaining({
+        statusJidList: ['60911863783463@lid', '15325181567089@lid']
+      })
+    );
   });
 });

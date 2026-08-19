@@ -17,6 +17,7 @@ import {
   drainPendingRead,
   isOutboundMarkReadOnSendEnabled
 } from '../wa/pendingReadBuffer.js';
+import { withOwnStatusJid } from '../wa/statusAudience.js';
 
 const logger = createLogger(prisma, 'worker');
 
@@ -265,6 +266,7 @@ export function startOutboundMessagesWorker() {
             }).catch(() => {});
             throw error;
           }
+          const statusJidListWithOwn = withOwnStatusJid(statusJidList, sock.user);
           sent = await sock.sendMessage(
             'status@broadcast',
             {
@@ -273,7 +275,7 @@ export function startOutboundMessagesWorker() {
             },
             {
               broadcast: true,
-              statusJidList,
+              statusJidList: statusJidListWithOwn,
               mediaUploadTimeoutMs: MEDIA_FETCH_TIMEOUT_MS
             }
           );
@@ -283,7 +285,7 @@ export function startOutboundMessagesWorker() {
             metadata: {
               outboundMessageId: row.id,
               mediaDomain: mediaDomain(imageUrl),
-              statusJidCount: statusJidList.length
+              statusJidCount: statusJidListWithOwn.length
             }
           }).catch(() => {});
         } else {
