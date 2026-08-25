@@ -18,6 +18,9 @@ import {
   isOutboundMarkReadOnSendEnabled
 } from '../wa/pendingReadBuffer.js';
 import { withOwnStatusJid } from '../wa/statusAudience.js';
+import { toJid } from '../wa/toJid.js';
+import { shouldBlockColdSend } from '../wa/outboundAck.js';
+import { hasReachoutLock } from '../wa/reachoutLock.js';
 
 const logger = createLogger(prisma, 'worker');
 
@@ -48,6 +51,48 @@ function classifyMediaSendError(err: unknown): string {
   if (message.includes('content-length') || message.includes('too large')) return 'media_too_large';
   if (message.includes('unsupported')) return 'unsupported_media_type';
   return 'media_fetch_failed';
+}
+
+const RECENT_INBOUND_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function hasRecentInboundFrom(deviceId: string, jid: string): Promise<boolean> {
+  try {
+    const row = await prisma.event.findFirst({
+      where: {
+        deviceId,
+        type: 'message.inbound',
+        createdAt: { gte: new Date(Date.now() - RECENT_INBOUND_MS) },
+        normalizedJson: { path: ['from'], equals: jid }
+      },
+      select: { id: true }
+    });
+    return Boolean(row);
+  } catch {
+    return false;
+  }
+}
+
+async function resolveOutboundJid(
+  sock: { onWhatsApp?: (...jids: string[]) => Promise<any> },
+  to: string
+): Promise<{ ok: true; jid: string } | { ok: false; error: string }> {
+  const jid = toJid(to);
+  if (jid.endsWith('@lid') || jid === 'status@broadcast' || typeof sock.onWhatsApp !== 'function') {
+    return { ok: true, jid };
+  }
+  try {
+    const result = await sock.onWhatsApp(jid);
+    const info = Array.isArray(result) ? result[0] : result;
+    if (info && info.exists === false) {
+      return { ok: false, error: 'number_not_on_whatsapp' };
+    }
+    if (typeof info?.jid === 'string' && info.jid.length > 0) {
+      return { ok: true, jid: info.jid };
+    }
+  } catch {
+    // Probe failed: send to the normalized JID anyway
+  }
+  return { ok: true, jid };
 }
 
 export function startOutboundMessagesWorker() {
@@ -165,10 +210,42 @@ export function startOutboundMessagesWorker() {
       }
 
       const payload = row.payloadJson as any;
-      const to = row.to; // expects jid or phone@s.whatsapp.net depending on caller
       const queuedAt = row.createdAt.getTime();
       const processingDelay = Date.now() - queuedAt;
       const isStatusImage = row.type === 'status_image';
+      let to = isStatusImage ? row.to : toJid(row.to);
+
+      if (!isStatusImage) {
+        const reachoutLocked = await hasReachoutLock(row.deviceId);
+        const hasRecentInbound = reachoutLocked ? await hasRecentInboundFrom(row.deviceId, to) : false;
+        if (shouldBlockColdSend({ reachoutLocked, isBroadcast: false, hasRecentInbound })) {
+          console.log('[paso-8] FALLO outbound: ack_error_463 (reachout lock)', {
+            outboundMessageId: row.id,
+            to,
+            deviceId: row.deviceId
+          });
+          await prisma.outboundMessage.update({
+            where: { id: row.id },
+            data: { status: 'FAILED', error: 'ack_error_463' }
+          }).catch(() => {});
+          return;
+        }
+
+        const resolved = await resolveOutboundJid(sock, to);
+        if (!resolved.ok) {
+          console.log('[paso-8] FALLO outbound: number_not_on_whatsapp', {
+            outboundMessageId: row.id,
+            to,
+            deviceId: row.deviceId
+          });
+          await prisma.outboundMessage.update({
+            where: { id: row.id },
+            data: { status: 'FAILED', error: resolved.error }
+          }).catch(() => {});
+          return;
+        }
+        to = resolved.jid;
+      }
 
       // Log if message was queued for too long (potential cause of WhatsApp "waiting" message)
       if (processingDelay > 30000) {

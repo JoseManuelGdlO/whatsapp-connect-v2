@@ -25,6 +25,7 @@ import { createLogger } from '@wc/logger';
 import { sendAlert } from '@wc/alert';
 import { sendMessageBodySchema } from './messages/sendPayload.js';
 import { sanitizePairingPhone } from './lib/pairingPhone.js';
+import { toJid } from './lib/toJid.js';
 
 const app = express();
 const prisma = new PrismaClient();
@@ -1033,13 +1034,6 @@ app.get(
     res.json({ messages: merged });
   })
 );
-
-function toJid(to: string): string {
-  const cleaned = to.replace(/[^\d]/g, '');
-  // If caller already provides jid, keep it
-  if (to.includes('@')) return to;
-  return `${cleaned}@s.whatsapp.net`;
-}
 
 app.post(
   '/devices/:id/messages/send',

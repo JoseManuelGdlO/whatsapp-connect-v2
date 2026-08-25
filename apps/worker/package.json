@@ -16,7 +16,7 @@
     "@prisma/client": "^6.1.0",
     "@wc/alert": "file:../../packages/alert",
     "@wc/logger": "file:../../packages/logger",
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "bullmq": "^5.34.10",
     "dotenv": "^16.4.7",
     "ioredis": "^5.4.1",

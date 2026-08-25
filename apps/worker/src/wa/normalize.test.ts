@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { proto } from '@whiskeysockets/baileys';
 
-import { normalizeInboundMessage, phoneDigitsFromPnJid, resolveFromPhone } from './normalize.js';
+import { isProtocolOnlyInbound, normalizeInboundMessage, phoneDigitsFromPnJid, resolveFromPhone } from './normalize.js';
 
 /** Baileys v7 message keys may include PN fields not yet on IMessageKey. */
 type TestMessageKey = proto.IMessageKey & {
@@ -216,5 +216,25 @@ describe('normalizeInboundMessage', () => {
       mediaUrl: null,
       greetingMessageBody: null
     });
+  });
+});
+
+describe('isProtocolOnlyInbound', () => {
+  it('detecta protocolMessage sin contenido de usuario', () => {
+    expect(
+      isProtocolOnlyInbound({
+        key: { id: 'p-1', remoteJid: '5216184485421@s.whatsapp.net', fromMe: false },
+        message: { protocolMessage: { type: 5 } }
+      } as proto.IWebMessageInfo)
+    ).toBe(true);
+  });
+
+  it('no filtra texto ni media reales', () => {
+    expect(
+      isProtocolOnlyInbound({
+        key: { id: 't-1', remoteJid: '5216184485421@s.whatsapp.net', fromMe: false },
+        message: { conversation: 'hola' }
+      } as proto.IWebMessageInfo)
+    ).toBe(false);
   });
 });

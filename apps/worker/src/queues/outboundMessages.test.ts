@@ -5,6 +5,7 @@ const hoisted = vi.hoisted(() => {
   const sendMessageMock = vi.fn(async (..._args: any[]) => ({ key: { id: 'provider-1' } }));
   const sendPresenceUpdateMock = vi.fn(async (..._args: any[]) => {});
   const readMessagesMock = vi.fn(async (..._args: any[]) => {});
+  const onWhatsAppMock = vi.fn(async (jid: string) => [{ exists: true, jid }]);
   const drainPendingReadMock = vi.fn(async (..._args: any[]) => [] as any[]);
   const callOrder: string[] = [];
 
@@ -18,6 +19,7 @@ const hoisted = vi.hoisted(() => {
     sendMessageMock,
     sendPresenceUpdateMock,
     readMessagesMock,
+    onWhatsAppMock,
     drainPendingReadMock,
     callOrder,
     rowById: new Map<string, any>(),
@@ -47,6 +49,9 @@ vi.mock('../lib/prisma.js', () => {
       },
       device: {
         findUnique: vi.fn(async ({ where }: any) => ({ id: where.id, status: 'ONLINE' }))
+      },
+      event: {
+        findFirst: vi.fn(async () => null)
       }
     }
   };
@@ -68,7 +73,8 @@ vi.mock('./deviceCommands.js', () => {
         sendMessage: (...args: any[]) => {
           hoisted.callOrder.push('sendMessage');
           return hoisted.sendMessageMock(...args);
-        }
+        },
+        onWhatsApp: (...args: any[]) => hoisted.onWhatsAppMock(...args)
       }))
     }
   };
@@ -83,7 +89,12 @@ vi.mock('../wa/pendingReadBuffer.js', async (importOriginal) => {
 });
 
 vi.mock('../lib/redis.js', () => {
-  return { redis: {} };
+  return {
+    redis: {
+      get: vi.fn(async () => null),
+      set: vi.fn(async () => 'OK')
+    }
+  };
 });
 
 vi.mock('@wc/logger', () => {
@@ -103,6 +114,7 @@ describe('outboundMessages worker media dispatch', () => {
     hoisted.callOrder.length = 0;
     hoisted.drainPendingReadMock.mockResolvedValue([]);
     hoisted.sendMessageMock.mockResolvedValue({ key: { id: 'provider-1' } });
+    hoisted.onWhatsAppMock.mockImplementation(async (jid: string) => [{ exists: true, jid }]);
     hoisted.socketUser = { id: 'me@s.whatsapp.net', lid: undefined };
   });
 
@@ -404,6 +416,34 @@ describe('outboundMessages worker media dispatch', () => {
       expect.anything(),
       expect.objectContaining({
         statusJidList: ['60911863783463@lid', '15325181567089@lid']
+      })
+    );
+  });
+
+  it('no envia si el numero no existe en WhatsApp', async () => {
+    hoisted.onWhatsAppMock.mockResolvedValueOnce([{ exists: false, jid: '5216181020927@s.whatsapp.net' }]);
+    const { prisma } = await import('../lib/prisma.js');
+    const { startOutboundMessagesWorker } = await import('./outboundMessages.js');
+    startOutboundMessagesWorker();
+    const processor = hoisted.getProcessor();
+
+    hoisted.rowById.set('out-missing', {
+      id: 'out-missing',
+      tenantId: 'tenant-1',
+      deviceId: 'device-1',
+      to: '6181020927@s.whatsapp.net',
+      type: 'text',
+      payloadJson: { text: 'hola' },
+      createdAt: new Date()
+    });
+
+    await processor?.({ id: 'job-missing', data: { outboundMessageId: 'out-missing' }, attemptsMade: 0 });
+
+    expect(hoisted.sendMessageMock).not.toHaveBeenCalled();
+    expect(prisma.outboundMessage.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'out-missing' },
+        data: expect.objectContaining({ status: 'FAILED', error: 'number_not_on_whatsapp' })
       })
     );
   });

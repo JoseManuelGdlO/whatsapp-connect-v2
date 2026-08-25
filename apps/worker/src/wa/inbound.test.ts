@@ -521,4 +521,35 @@ describe('handleMessagesUpsert', () => {
 
     expect(queueAddMock).toHaveBeenCalledTimes(1);
   });
+
+  it('no crea evento ni webhook para protocolMessage interno', async () => {
+    normalizeInboundMessageMock.mockReturnValue({
+      from: '5216184485421@s.whatsapp.net',
+      content: { type: 'unknown', text: null, media: null }
+    });
+
+    const { prisma } = await import('../lib/prisma.js');
+    const { handleMessagesUpsert } = await import('./inbound.js');
+    await handleMessagesUpsert({
+      deviceId: 'device-1',
+      sock: {
+        user: { id: 'me@s.whatsapp.net' },
+        sendPresenceUpdate: vi.fn(async () => {}),
+        readMessages: vi.fn(async () => {})
+      } as any,
+      messages: [
+        {
+          key: {
+            id: 'AC0985F38AFDAE04DBE1EE49372247BC',
+            remoteJid: '5216184485421@s.whatsapp.net',
+            fromMe: false
+          },
+          message: { protocolMessage: { type: 5 } }
+        }
+      ] as any
+    });
+
+    expect(prisma.event.create).not.toHaveBeenCalled();
+    expect(queueAddMock).not.toHaveBeenCalled();
+  });
 });

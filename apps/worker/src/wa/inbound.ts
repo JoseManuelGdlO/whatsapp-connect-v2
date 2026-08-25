@@ -4,7 +4,8 @@ import type { proto, WASocket } from '@whiskeysockets/baileys';
 import { prisma } from '../lib/prisma.js';
 import { Queue } from 'bullmq';
 import { redis } from '../lib/redis.js';
-import { normalizeInboundMessage } from './normalize.js';
+import { isProtocolOnlyInbound, normalizeInboundMessage } from './normalize.js';
+import { toJid } from './toJid.js';
 import { createLogger } from '@wc/logger';
 import { markMessagesRead } from './markMessagesRead.js';
 import {
@@ -19,12 +20,6 @@ import {
 const webhookQueue = new Queue('webhook_dispatch', { connection: redis });
 const outboundQueue = new Queue('outbound_messages', { connection: redis });
 const logger = createLogger(prisma, 'worker');
-
-function toJid(to: string): string {
-  if (!to) return to;
-  if (to.includes('@')) return to;
-  return `${to.replace(/\D/g, '')}@s.whatsapp.net`;
-}
 
 export type MessagesUpsertResult = {
   clearSenderAndReconnect?: { remoteJid: string; senderPn?: string };
@@ -97,6 +92,15 @@ export async function handleMessagesUpsert(params: {
         });
         continue;
       }
+    }
+
+    if (isProtocolOnlyInbound(msg)) {
+      console.log('[inbound-skip-protocol]', {
+        messageId: key.id,
+        remoteJid: key.remoteJid,
+        rawMessageKeys: Object.keys(msg.message ?? {})
+      });
+      continue;
     }
 
     console.log('[paso-1] Mensaje recibido', { messageId: key.id, remoteJid: key.remoteJid, deviceId: params.deviceId });

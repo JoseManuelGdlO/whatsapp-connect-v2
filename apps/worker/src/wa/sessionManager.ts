@@ -6,6 +6,8 @@ import { loadAuthState, disposeAuthStateSaves, deletePersistedAuthState } from '
 import { handleMessagesUpsert } from './inbound.js';
 import { phoneDigitsFromPnJid } from './normalize.js';
 import { sanitizePairingPhone } from './pairingPhone.js';
+import { isReachoutTimelockAck } from './outboundAck.js';
+import { setReachoutLock } from './reachoutLock.js';
 import { createLogger } from '@wc/logger';
 import { sendDeviceDisconnectAlert } from '@wc/alert';
 
@@ -641,6 +643,34 @@ export class SessionManager {
             metadata: { messageCount: m.messages?.length ?? 0 }
           }).catch(() => {});
         }
+      }
+    });
+
+    sock.ev.on('messages.update', async (updates: any[]) => {
+      try {
+        for (const item of updates ?? []) {
+          if (!item?.key?.fromMe) continue;
+          const attrsError = item.update?.error ?? item.error;
+          if (!isReachoutTimelockAck(item.update, attrsError)) continue;
+          const providerMessageId = item.key.id;
+          if (!providerMessageId) continue;
+          await prisma.outboundMessage.updateMany({
+            where: { deviceId, providerMessageId },
+            data: { status: 'FAILED', error: 'ack_error_463' }
+          }).catch(() => {});
+          await setReachoutLock(deviceId);
+          await prisma.device.update({
+            where: { id: deviceId },
+            data: { lastError: 'ack_error_463' }
+          }).catch(() => {});
+          console.log('[paso-9] ACK 463 reachout timelock', {
+            deviceId,
+            providerMessageId,
+            remoteJid: item.key.remoteJid
+          });
+        }
+      } catch {
+        // Never break the socket event loop
       }
     });
 

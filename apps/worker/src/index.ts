@@ -9,9 +9,12 @@ import { startOutboundMessagesWorker } from './queues/outboundMessages.js';
 import { assertCryptoKeyConfigured } from './lib/crypto.js';
 import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
+import { installSessionCipherLogFilter } from './wa/sessionCipherLog.js';
 import { createLogger } from '@wc/logger';
 import { sendAlert } from '@wc/alert';
 import { sessionManager } from './queues/deviceCommands.js';
+
+installSessionCipherLogFilter();
 
 const port = Number(process.env.WORKER_HEALTH_PORT ?? 3030);
 const logger = createLogger(prisma, 'worker');

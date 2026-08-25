@@ -244,6 +244,40 @@ function resolveFromJid(key: proto.IMessageKey | undefined): string {
   return k.remoteJid ?? '';
 }
 
+const USER_CONTENT_MESSAGE_KEYS = new Set([
+  'conversation',
+  'extendedTextMessage',
+  'imageMessage',
+  'videoMessage',
+  'audioMessage',
+  'documentMessage',
+  'stickerMessage',
+  'locationMessage',
+  'liveLocationMessage',
+  'contactMessage',
+  'contactsArrayMessage',
+  'buttonsResponseMessage',
+  'templateButtonReplyMessage',
+  'listResponseMessage',
+  'reactionMessage',
+  'interactiveResponseMessage',
+  'interactiveMessage',
+  'buttonsMessage',
+  'templateMessage',
+  'viewOnceMessage',
+  'viewOnceMessageV2',
+  'ephemeralMessage',
+  'documentWithCaptionMessage'
+]);
+
+/** True for WhatsApp internal protocol/sync envelopes that are not user chats. */
+export function isProtocolOnlyInbound(message: proto.IWebMessageInfo): boolean {
+  const keys = Object.keys(message.message ?? {}).filter((k) => k !== 'messageContextInfo');
+  if (keys.length === 0) return false;
+  if (keys.some((k) => USER_CONTENT_MESSAGE_KEYS.has(k))) return false;
+  return keys.every((k) => k === 'protocolMessage' || k === 'senderKeyDistributionMessage');
+}
+
 export function normalizeInboundMessage(params: {
   message: proto.IWebMessageInfo;
   deviceJid: string | null;

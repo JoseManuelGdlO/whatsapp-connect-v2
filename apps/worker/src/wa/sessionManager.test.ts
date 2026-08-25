@@ -97,10 +97,22 @@ vi.mock('../lib/prisma.js', () => {
       event: {
         findMany: vi.fn(async () => [])
       },
+      outboundMessage: {
+        updateMany: vi.fn(async () => ({ count: 0 }))
+      },
       waSession: {
         findUnique: vi.fn(async () => null),
         deleteMany: vi.fn(async () => ({ count: 0 }))
       }
+    }
+  };
+});
+
+vi.mock('../lib/redis.js', () => {
+  return {
+    redis: {
+      set: vi.fn(async () => 'OK'),
+      get: vi.fn(async () => null)
     }
   };
 });

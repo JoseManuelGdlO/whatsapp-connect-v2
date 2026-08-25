@@ -106,7 +106,6 @@ export function startWebhookDispatchWorker() {
           where: { id: delivery.id },
           data: { status: 'SUCCESS', attempts: { increment: 1 }, lastError: null, nextRetryAt: null }
         });
-        console.log('[paso-6] Webhook entregado OK', { deliveryId: delivery.id, statusCode: resp.status, eventId: delivery.eventId });
       } catch (err: any) {
         await logger.error(
           `Webhook delivery error for ${delivery.endpoint.url}`,
