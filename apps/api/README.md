@@ -10,6 +10,30 @@
 ## Endpoint base (MVP)
 - `GET /health`
 
+## Crear device (JWT de servicio)
+
+Los integradores (p. ej. bot-invitations) pueden crear un device en un tenant con el **JWT de servicio** (`Authorization: Bearer`), no con `BOT_API_KEY`.
+
+### Requisitos
+- Token emitido en el panel (`POST /auth/service-jwt`) con el scope `devices:create`.
+- Los tokens existentes **no** incluyen ese scope: hay que emitir uno nuevo (puedes incluir también `devices:status:read`, `devices:public-link:write`, `messages:send`, `messages:test`).
+- Body: `tenantId` (obligatorio para el token de servicio) y `label` (obligatorio).
+
+### Ejemplo
+
+```bash
+curl -X POST "$API_URL/devices" \
+  -H "content-type: application/json" \
+  -H "Authorization: Bearer $WC_SERVICE_JWT" \
+  -d '{"tenantId":"'"$TENANT_ID"'","label":"cuenta-xyz"}'
+```
+
+Respuesta `201`: el objeto device (`id`, `tenantId`, `label`, `status: "OFFLINE"`, …). Guarda `id` para send/QR.
+
+Errores habituales: `401` token inválido o revocado; `403 missing_scope` si falta `devices:create`; `400 tenantId_required` / `invalid_tenantId`.
+
+El device nace `OFFLINE`. Conectar QR usa `POST /devices/:id/connect` o `POST /devices/:id/public-link` con los scopes ya existentes.
+
 ## Integración bot (responder al mismo chat)
 
 Cuando llega un inbound por webhook, tu bot puede responder enviando un mensaje saliente con el mismo `deviceId` y el mismo chat (`normalized.from`).
@@ -71,7 +95,8 @@ curl -X POST "$API_URL/devices/$DEVICE_ID/messages/send" \
   -d '{"type":"status_image","imageUrl":"https://cdn.cliente.com/estado.jpg","caption":"Texto del estado","statusJidList":["'"$FROM_JID"'"]}'
 ```
 
-## Troubleshooting- **401 `invalid_api_key`**: el header `x-api-key` no coincide con `BOT_API_KEY` del API.
+## Troubleshooting
+- **401 `invalid_api_key`**: el header `x-api-key` no coincide con `BOT_API_KEY` del API.
 - **400 `tenantId_required`**: falta header `x-tenant-id` (usa el `tenantId` del webhook o el header `x-tenant-id` del webhook).
 - **403 `forbidden`**: el `deviceId` no pertenece al tenant indicado en `x-tenant-id` (o al tenant del JWT).
 - **409 `device_not_online`**: el device no está ONLINE (necesita conectar sesión/QR).

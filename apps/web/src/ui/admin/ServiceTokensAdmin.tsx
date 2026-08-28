@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiJson } from '../../api/client';
 
 const SERVICE_SCOPES = [
+  'devices:create',
   'devices:status:read',
   'devices:public-link:write',
   'messages:send',

@@ -137,6 +137,7 @@ const asyncHandler = (fn: express.RequestHandler): express.RequestHandler => {
 };
 
 const SERVICE_SCOPES = [
+  'devices:create',
   'devices:status:read',
   'devices:public-link:write',
   'messages:send',
@@ -610,6 +611,7 @@ app.delete(
 app.post(
   '/devices',
   authRequired,
+  requireServiceScope('devices:create'),
   requireRole(UserRole.SUPERADMIN),
   asyncHandler(async (req, res) => {
   const auth = (req as any).auth as AuthPayload;
